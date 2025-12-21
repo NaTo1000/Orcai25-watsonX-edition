@@ -55,7 +55,6 @@ class SecurityMonitor:
         self.metrics_history: Dict[MonitoringMetric, List[float]] = defaultdict(list)
         self.active_alerts: List[SecurityAlert] = []
         self.alert_handlers: Dict[AlertSeverity, List[Callable]] = defaultdict(list)
-        self.baseline_established = False
         self.baselines: Dict[MonitoringMetric, Dict] = {}
         self.event_correlations: Dict[str, List[str]] = defaultdict(list)
         
@@ -68,12 +67,12 @@ class SecurityMonitor:
         if len(self.metrics_history[metric]) > 1000:
             self.metrics_history[metric] = self.metrics_history[metric][-1000:]
         
-        # Establish baseline if enough data
-        if len(self.metrics_history[metric]) >= 100 and not self.baseline_established:
+        # Establish baseline if enough data and not yet established for this metric
+        if len(self.metrics_history[metric]) >= 100 and metric not in self.baselines:
             self._establish_baseline(metric)
         
-        # Check for anomalies
-        if self.baseline_established:
+        # Check for anomalies if baseline established for this metric
+        if metric in self.baselines:
             anomaly = self._detect_anomaly(metric, value)
             if anomaly:
                 self._trigger_anomaly_alert(metric, value, source, anomaly)

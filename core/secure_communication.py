@@ -2,6 +2,16 @@
 Secure Communication Protocols
 Implements secure, authenticated, and encrypted communication channels
 Uses modern protocols with perfect forward secrecy
+
+⚠️ IMPORTANT SECURITY NOTE:
+This module uses SIMULATED cryptography for demonstration purposes.
+In production, replace with actual cryptographic libraries:
+- cryptography (Python library): https://cryptography.io/
+- NaCl/libsodium: https://github.com/pyca/pynacl
+- OpenSSL bindings
+
+The AEAD encryption uses placeholder XOR operations that provide NO
+real security. Replace with AES-256-GCM or ChaCha20-Poly1305.
 """
 
 import json

@@ -304,15 +304,14 @@ class RogueAIDetector:
         system = self.monitored_systems[system_id]
         current_time = time.time()
         
-        # Initialize error tracking
+        # Initialize error tracking with deque for efficient size management
         if "errors" not in system:
-            system["errors"] = []
+            from collections import deque
+            system["errors"] = deque(maxlen=1000)
         
         # Remove old errors outside time window
-        system["errors"] = [
-            err_time for err_time in system["errors"]
-            if current_time - err_time < time_window
-        ]
+        while system["errors"] and current_time - system["errors"][0] > time_window:
+            system["errors"].popleft()
         
         # Check if threshold exceeded
         if len(system["errors"]) >= error_threshold:
@@ -325,8 +324,9 @@ class RogueAIDetector:
     def record_error(self, system_id: str):
         """Record error for circuit breaker tracking"""
         if system_id in self.monitored_systems:
+            from collections import deque
             if "errors" not in self.monitored_systems[system_id]:
-                self.monitored_systems[system_id]["errors"] = []
+                self.monitored_systems[system_id]["errors"] = deque(maxlen=1000)
             self.monitored_systems[system_id]["errors"].append(time.time())
     
     def get_system_status(self, system_id: str) -> Optional[Dict]:

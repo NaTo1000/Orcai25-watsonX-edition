@@ -2,6 +2,16 @@
 Quantum-Resistant Cryptography Module
 Implements post-quantum cryptographic algorithms to protect against
 quantum computer attacks (future-proof security)
+
+⚠️ IMPORTANT SECURITY NOTE:
+This module uses SIMULATED cryptography for demonstration purposes.
+In production, replace with actual post-quantum cryptography libraries:
+- liboqs (Open Quantum Safe): https://github.com/open-quantum-safe/liboqs
+- PQClean: https://github.com/PQClean/PQClean
+- Google's Tink with PQC support
+
+The interface and structure shown here are correct, but the actual
+cryptographic operations are placeholders that provide NO real security.
 """
 
 import hashlib

@@ -162,7 +162,13 @@ class ZeroTrustEngine:
     def _get_allowed_paths(self, entity: str) -> Set[str]:
         """Get allowed resource paths for entity (placeholder for policy engine)"""
         # In production, this would query a policy engine
-        return set()
+        # For demonstration, allow basic paths
+        default_paths = {
+            f"{entity}/read",
+            f"{entity}/list",
+            "public/read"
+        }
+        return default_paths
     
     def continuous_verification(self, session_token: str) -> bool:
         """
