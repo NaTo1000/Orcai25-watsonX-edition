@@ -7,6 +7,7 @@ Provides automated audit logging and compliance checking
 import json
 import time
 import hashlib
+import hmac
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Set
@@ -123,12 +124,11 @@ class AuditLogger:
         # Serialize entry data deterministically
         serialized = json.dumps(entry_data, sort_keys=True)
         
-        # Create HMAC signature
-        h = hashlib.sha256()
-        h.update(self.secret_key)
-        h.update(serialized.encode())
-        
-        return h.hexdigest()
+        return hmac.new(
+            self.secret_key,
+            serialized.encode(),
+            hashlib.sha256,
+        ).hexdigest()
     
     def _write_to_audit_log(self, entry: AuditEntry):
         """Write audit entry to persistent storage"""
@@ -165,7 +165,7 @@ class AuditLogger:
             
             # Verify signature
             expected_signature = self._generate_signature(entry_data)
-            if entry.signature != expected_signature:
+            if not hmac.compare_digest(entry.signature, expected_signature):
                 print(f"[AUDIT INTEGRITY] Tampering detected at entry {entry.entry_id}")
                 return False
             

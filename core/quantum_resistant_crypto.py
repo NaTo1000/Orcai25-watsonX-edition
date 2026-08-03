@@ -1,211 +1,259 @@
 """
-Quantum-Resistant Cryptography Module
-Implements post-quantum cryptographic algorithms to protect against
-quantum computer attacks (future-proof security)
+Post-quantum cryptographic primitives.
 
-⚠️ IMPORTANT SECURITY NOTE:
-This module uses SIMULATED cryptography for demonstration purposes.
-In production, replace with actual post-quantum cryptography libraries:
-- liboqs (Open Quantum Safe): https://github.com/open-quantum-safe/liboqs
-- PQClean: https://github.com/PQClean/PQClean
-- Google's Tink with PQC support
-
-The interface and structure shown here are correct, but the actual
-cryptographic operations are placeholders that provide NO real security.
+Key encapsulation uses ML-KEM-1024 (FIPS 203), signatures use ML-DSA-87
+(FIPS 204), and payload encryption uses AES-256-GCM.
 """
 
-import hashlib
-import secrets
-from typing import Tuple, Optional
-import json
 import base64
+import binascii
+import json
+import secrets
+from typing import Dict, Optional, Tuple
+
+from cryptography.exceptions import InvalidSignature, InvalidTag, UnsupportedAlgorithm
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.mldsa import (
+    MLDSA87PrivateKey,
+    MLDSA87PublicKey,
+)
+from cryptography.hazmat.primitives.asymmetric.mlkem import (
+    MLKEM1024PrivateKey,
+    MLKEM1024PublicKey,
+)
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
 class QuantumResistantCrypto:
-    """
-    Post-quantum cryptography implementation
-    Uses lattice-based and hash-based algorithms resistant to quantum attacks
-    """
-    
+    """FIPS-standard post-quantum key encapsulation and signatures."""
+
+    KEY_BUNDLE_VERSION = 2
+    KEM_ALGORITHM = "ML-KEM-1024"
+    SIGNATURE_ALGORITHM = "ML-DSA-87"
+
     def __init__(self):
-        self.algorithm = "CRYSTALS-KYBER-1024"  # NIST PQC standard
-        self.hash_algorithm = "SHA3-512"  # Quantum-resistant hash
-        
+        self.algorithm = self.KEM_ALGORITHM
+        self.hash_algorithm = "SHA3-512"
+
     def generate_keypair(self) -> Tuple[bytes, bytes]:
         """
-        Generate quantum-resistant key pair
-        In production, use actual lattice-based crypto libraries (e.g., liboqs)
-        This is a simulation showing the interface
+        Generate a public/private bundle for key encapsulation and signatures.
+
+        The private bundle contains seeds and must be protected like any other
+        private key. The returned serialized format is application-specific.
         """
-        # Simulate CRYSTALS-KYBER key generation
-        private_key = secrets.token_bytes(2400)  # Kyber-1024 private key size
-        public_key = self._derive_public_key(private_key)
-        
-        return public_key, private_key
-    
-    def _derive_public_key(self, private_key: bytes) -> bytes:
-        """Derive public key from private key (simulated)"""
-        # In production, use actual lattice-based derivation
-        return hashlib.sha3_512(private_key + b"public").digest()
-    
+        try:
+            kem_private = MLKEM1024PrivateKey.generate()
+            signing_private = MLDSA87PrivateKey.generate()
+        except UnsupportedAlgorithm as exc:
+            raise RuntimeError(
+                "The active cryptography backend does not support ML-KEM and ML-DSA"
+            ) from exc
+
+        public_bundle = {
+            "version": self.KEY_BUNDLE_VERSION,
+            "kem_algorithm": self.KEM_ALGORITHM,
+            "kem_public_key": self._encode(kem_private.public_key().public_bytes_raw()),
+            "signature_algorithm": self.SIGNATURE_ALGORITHM,
+            "signature_public_key": self._encode(
+                signing_private.public_key().public_bytes_raw()
+            ),
+        }
+        private_bundle = {
+            "version": self.KEY_BUNDLE_VERSION,
+            "kem_algorithm": self.KEM_ALGORITHM,
+            "kem_private_seed": self._encode(kem_private.private_bytes_raw()),
+            "signature_algorithm": self.SIGNATURE_ALGORITHM,
+            "signature_private_seed": self._encode(
+                signing_private.private_bytes_raw()
+            ),
+        }
+        return self._serialize(public_bundle), self._serialize(private_bundle)
+
     def encapsulate(self, public_key: bytes) -> Tuple[bytes, bytes]:
-        """
-        Key encapsulation mechanism (KEM)
-        Returns (ciphertext, shared_secret)
-        Quantum-resistant key exchange
-        """
-        # Generate random shared secret
-        shared_secret = secrets.token_bytes(32)
-        
-        # Encapsulate with public key (simulated lattice-based encryption)
-        ciphertext = self._lattice_encrypt(shared_secret, public_key)
-        
+        """Encapsulate and return ``(ciphertext, shared_secret)``."""
+        bundle = self._load_public_bundle(public_key)
+        kem_public = MLKEM1024PublicKey.from_public_bytes(
+            self._decode(bundle["kem_public_key"])
+        )
+        shared_secret, ciphertext = kem_public.encapsulate()
         return ciphertext, shared_secret
-    
+
     def decapsulate(self, ciphertext: bytes, private_key: bytes) -> Optional[bytes]:
-        """
-        Decapsulate to recover shared secret
-        Quantum-resistant key exchange
-        """
+        """Recover a shared secret from an ML-KEM-1024 ciphertext."""
         try:
-            shared_secret = self._lattice_decrypt(ciphertext, private_key)
-            return shared_secret
-        except Exception as e:
-            print(f"[CRYPTO ERROR] Decapsulation failed: {e}")
+            bundle = self._load_private_bundle(private_key)
+            kem_private = MLKEM1024PrivateKey.from_seed_bytes(
+                self._decode(bundle["kem_private_seed"])
+            )
+            return kem_private.decapsulate(ciphertext)
+        except (TypeError, ValueError, UnsupportedAlgorithm):
             return None
-    
-    def _lattice_encrypt(self, plaintext: bytes, public_key: bytes) -> bytes:
-        """Simulate lattice-based encryption (CRYSTALS-KYBER)"""
-        # In production, use actual lattice-based encryption
-        noise = secrets.token_bytes(16)
-        combined = public_key + plaintext + noise
-        return hashlib.sha3_512(combined).digest() + noise
-    
-    def _lattice_decrypt(self, ciphertext: bytes, private_key: bytes) -> bytes:
-        """Simulate lattice-based decryption (CRYSTALS-KYBER)"""
-        # In production, use actual lattice-based decryption
-        # This is a placeholder showing the interface
-        return hashlib.sha3_256(ciphertext + private_key).digest()[:32]
-    
+
     def hash_based_signature(self, message: bytes, private_key: bytes) -> bytes:
-        """
-        Generate quantum-resistant digital signature
-        Uses hash-based signatures (SPHINCS+ or similar)
-        """
-        # Use SHA3 for quantum resistance
-        h = hashlib.sha3_512()
-        h.update(private_key)
-        h.update(message)
-        signature = h.digest()
-        
-        # Add signature metadata
-        sig_data = {
-            "algorithm": "SPHINCS+-SHA3-512",
-            "signature": base64.b64encode(signature).decode(),
-            "version": "1.0"
-        }
-        
-        return json.dumps(sig_data).encode()
-    
-    def verify_signature(self, message: bytes, signature: bytes, 
-                        public_key: bytes) -> bool:
-        """
-        Verify quantum-resistant digital signature
-        """
+        """Sign a message with ML-DSA-87; the method name is kept for compatibility."""
+        bundle = self._load_private_bundle(private_key)
+        signing_private = MLDSA87PrivateKey.from_seed_bytes(
+            self._decode(bundle["signature_private_seed"])
+        )
+        signature = signing_private.sign(message)
+        return self._serialize(
+            {
+                "version": self.KEY_BUNDLE_VERSION,
+                "algorithm": self.SIGNATURE_ALGORITHM,
+                "signature": self._encode(signature),
+            }
+        )
+
+    def verify_signature(
+        self, message: bytes, signature: bytes, public_key: bytes
+    ) -> bool:
+        """Verify an ML-DSA-87 signature."""
         try:
-            sig_data = json.loads(signature.decode())
-            sig_bytes = base64.b64decode(sig_data["signature"])
-            
-            # Verify using public key
-            h = hashlib.sha3_512()
-            h.update(public_key)
-            h.update(message)
-            expected = h.digest()
-            
-            # Constant-time comparison
-            return secrets.compare_digest(sig_bytes, expected)
-        except Exception:
+            signature_data = json.loads(signature.decode("utf-8"))
+            if (
+                signature_data.get("version") != self.KEY_BUNDLE_VERSION
+                or signature_data.get("algorithm") != self.SIGNATURE_ALGORITHM
+            ):
+                return False
+
+            bundle = self._load_public_bundle(public_key)
+            signing_public = MLDSA87PublicKey.from_public_bytes(
+                self._decode(bundle["signature_public_key"])
+            )
+            signing_public.verify(
+                self._decode(signature_data["signature"]),
+                message,
+            )
+            return True
+        except (
+            InvalidSignature,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ):
             return False
-    
+
     def hybrid_encryption(self, data: bytes, recipient_public_key: bytes) -> dict:
-        """
-        Hybrid encryption combining quantum-resistant KEM with symmetric encryption
-        More efficient for large data
-        """
-        # Use quantum-resistant KEM to establish shared secret
-        ciphertext_kem, shared_secret = self.encapsulate(recipient_public_key)
-        
-        # Use shared secret for symmetric encryption (AES-256 or ChaCha20)
-        encrypted_data = self._symmetric_encrypt(data, shared_secret)
-        
+        """Encrypt data with ML-KEM-1024 and AES-256-GCM."""
+        kem_ciphertext, shared_secret = self.encapsulate(recipient_public_key)
+        encrypted_data = self._symmetric_encrypt(
+            data,
+            shared_secret,
+            associated_data=kem_ciphertext,
+        )
         return {
-            "kem_ciphertext": base64.b64encode(ciphertext_kem).decode(),
-            "encrypted_data": base64.b64encode(encrypted_data).decode(),
-            "algorithm": "HYBRID-KYBER-AES256"
+            "version": self.KEY_BUNDLE_VERSION,
+            "kem_ciphertext": self._encode(kem_ciphertext),
+            "encrypted_data": self._encode(encrypted_data),
+            "algorithm": "ML-KEM-1024+AES-256-GCM",
         }
-    
-    def hybrid_decryption(self, encrypted_package: dict, 
-                         private_key: bytes) -> Optional[bytes]:
-        """
-        Decrypt hybrid encrypted data
-        """
+
+    def hybrid_decryption(
+        self, encrypted_package: dict, private_key: bytes
+    ) -> Optional[bytes]:
+        """Decrypt an ML-KEM-1024 and AES-256-GCM package."""
         try:
-            # Recover shared secret using private key
-            kem_ciphertext = base64.b64decode(encrypted_package["kem_ciphertext"])
+            if (
+                encrypted_package.get("version") != self.KEY_BUNDLE_VERSION
+                or encrypted_package.get("algorithm")
+                != "ML-KEM-1024+AES-256-GCM"
+            ):
+                return None
+
+            kem_ciphertext = self._decode(encrypted_package["kem_ciphertext"])
             shared_secret = self.decapsulate(kem_ciphertext, private_key)
-            
             if shared_secret is None:
                 return None
-            
-            # Decrypt data with shared secret
-            encrypted_data = base64.b64decode(encrypted_package["encrypted_data"])
-            plaintext = self._symmetric_decrypt(encrypted_data, shared_secret)
-            
-            return plaintext
-        except Exception as e:
-            print(f"[CRYPTO ERROR] Hybrid decryption failed: {e}")
+
+            encrypted_data = self._decode(encrypted_package["encrypted_data"])
+            return self._symmetric_decrypt(
+                encrypted_data,
+                shared_secret,
+                associated_data=kem_ciphertext,
+            )
+        except (KeyError, TypeError, ValueError, InvalidTag):
             return None
-    
-    def _symmetric_encrypt(self, data: bytes, key: bytes) -> bytes:
-        """Symmetric encryption (placeholder for AES-256-GCM or ChaCha20-Poly1305)"""
-        # In production, use actual AES-256-GCM or ChaCha20-Poly1305
-        from hashlib import pbkdf2_hmac
-        derived_key = pbkdf2_hmac('sha3-512', key, b'salt', 100000)
-        
-        # XOR encryption as placeholder (use real crypto in production)
-        encrypted = bytes(b ^ derived_key[i % len(derived_key)] 
-                         for i, b in enumerate(data))
-        return encrypted
-    
-    def _symmetric_decrypt(self, data: bytes, key: bytes) -> bytes:
-        """Symmetric decryption"""
-        from hashlib import pbkdf2_hmac
-        derived_key = pbkdf2_hmac('sha3-512', key, b'salt', 100000)
-        
-        # XOR decryption as placeholder (use real crypto in production)
-        decrypted = bytes(b ^ derived_key[i % len(derived_key)] 
-                         for i, b in enumerate(data))
-        return decrypted
-    
-    def quantum_safe_key_derivation(self, master_key: bytes, 
-                                    context: str, length: int = 32) -> bytes:
-        """
-        Derive keys using quantum-resistant KDF
-        Uses SHA3-based HKDF
-        """
-        # Extract
-        prk = hashlib.sha3_512(master_key).digest()
-        
-        # Expand
-        okm = b''
-        counter = 1
-        while len(okm) < length:
-            h = hashlib.sha3_512()
-            h.update(prk)
-            h.update(okm[-64:] if okm else b'')
-            h.update(context.encode())
-            h.update(counter.to_bytes(1, 'big'))
-            okm += h.digest()
-            counter += 1
-        
-        return okm[:length]
+
+    def _symmetric_encrypt(
+        self, data: bytes, key: bytes, associated_data: bytes = b""
+    ) -> bytes:
+        nonce = secrets.token_bytes(12)
+        encryption_key = self.quantum_safe_key_derivation(
+            key, "orcai25-hybrid-aead-v1"
+        )
+        return nonce + AESGCM(encryption_key).encrypt(nonce, data, associated_data)
+
+    def _symmetric_decrypt(
+        self, data: bytes, key: bytes, associated_data: bytes = b""
+    ) -> bytes:
+        if len(data) < 28:
+            raise ValueError("Encrypted payload is too short")
+        nonce, ciphertext = data[:12], data[12:]
+        encryption_key = self.quantum_safe_key_derivation(
+            key, "orcai25-hybrid-aead-v1"
+        )
+        return AESGCM(encryption_key).decrypt(nonce, ciphertext, associated_data)
+
+    def quantum_safe_key_derivation(
+        self, master_key: bytes, context: str, length: int = 32
+    ) -> bytes:
+        """Derive context-bound key material with HKDF-SHA3-512."""
+        if length <= 0:
+            raise ValueError("Derived key length must be positive")
+        return HKDF(
+            algorithm=hashes.SHA3_512(),
+            length=length,
+            salt=None,
+            info=context.encode("utf-8"),
+        ).derive(master_key)
+
+    def _load_public_bundle(self, serialized: bytes) -> Dict[str, object]:
+        return self._load_bundle(
+            serialized,
+            required_fields=("kem_public_key", "signature_public_key"),
+        )
+
+    def _load_private_bundle(self, serialized: bytes) -> Dict[str, object]:
+        return self._load_bundle(
+            serialized,
+            required_fields=("kem_private_seed", "signature_private_seed"),
+        )
+
+    def _load_bundle(
+        self, serialized: bytes, required_fields: Tuple[str, ...]
+    ) -> Dict[str, object]:
+        try:
+            bundle = json.loads(serialized.decode("utf-8"))
+        except (AttributeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("Invalid key bundle") from exc
+
+        if (
+            not isinstance(bundle, dict)
+            or bundle.get("version") != self.KEY_BUNDLE_VERSION
+            or bundle.get("kem_algorithm") != self.KEM_ALGORITHM
+            or bundle.get("signature_algorithm") != self.SIGNATURE_ALGORITHM
+            or any(field not in bundle for field in required_fields)
+        ):
+            raise ValueError("Unsupported or incomplete key bundle")
+        return bundle
+
+    @staticmethod
+    def _serialize(value: Dict[str, object]) -> bytes:
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    @staticmethod
+    def _encode(value: bytes) -> str:
+        return base64.b64encode(value).decode("ascii")
+
+    @staticmethod
+    def _decode(value: object) -> bytes:
+        if not isinstance(value, str):
+            raise ValueError("Expected base64-encoded key material")
+        try:
+            return base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Invalid base64-encoded key material") from exc

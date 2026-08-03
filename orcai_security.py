@@ -3,20 +3,28 @@ Orcai25 WatsonX Edition - Enterprise Cybersecurity Stack
 Main initialization and orchestration module
 """
 
+import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional
+
+from cryptography.hazmat.primitives.asymmetric import x25519
 
 # Import core security modules
 sys.path.insert(0, str(Path(__file__).parent))
 
 from core.zero_trust_architecture import ZeroTrustEngine, SecurityContext, TrustLevel
 from core.quantum_resistant_crypto import QuantumResistantCrypto
-from core.ai_threat_detection import AIThreatDetector, ThreatLevel
+from core.ai_threat_detection import AIThreatDetector
 from core.secure_communication import SecureCommProtocol, SecurityLevel
-from emergency_protocols.rogue_ai_containment import RogueAIDetector, EmergencyLevel
+from emergency_protocols.rogue_ai_containment import RogueAIDetector
 from audit.compliance_framework import AuditLogger, ComplianceChecker, AuditEventType, ComplianceStandard
 from monitoring.security_monitor import SecurityMonitor, AlertSeverity
+
+
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "security_config.json"
+VERSION = "1.0.0"
 
 
 class OrcaiSecurityStack:
@@ -25,14 +33,15 @@ class OrcaiSecurityStack:
     Orchestrates all security components for comprehensive protection
     """
     
-    def __init__(self, config_path: str = "config/security_config.json"):
+    def __init__(self, config_path: Optional[str] = None):
         print("=" * 80)
         print("ORCAI25 WATSONX EDITION - ENTERPRISE CYBERSECURITY STACK")
         print("Next-Generation Security for AI Systems")
         print("=" * 80)
         
         # Load configuration
-        self.config = self._load_config(config_path)
+        resolved_config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+        self.config = self._load_config(resolved_config_path)
         
         # Initialize components
         print("\n[INIT] Initializing security components...")
@@ -78,28 +87,39 @@ class OrcaiSecurityStack:
             resource="orcai_security_stack",
             action="initialize",
             result="success",
-            details={"version": "1.0.0", "components": 7}
+            details={"version": VERSION, "components": 7}
         )
     
-    def _load_config(self, config_path: str) -> dict:
+    def _load_config(self, config_path: Path) -> dict:
         """Load security configuration"""
         try:
-            with open(config_path, 'r') as f:
+            with config_path.open("r", encoding="utf-8") as f:
                 config = json.load(f)
             print(f"✓ Configuration loaded from {config_path}")
             return config
         except FileNotFoundError:
             print(f"⚠ Config file not found: {config_path}, using defaults")
             return self._get_default_config()
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON configuration: {config_path}") from exc
     
     def _get_default_config(self) -> dict:
         """Get default configuration"""
         return {
-            "security": {"encryption": {"enabled": True}},
+            "security": {
+                "encryption": {"enabled": True},
+                "access_controls": {"enabled": True},
+            },
             "monitoring": {"enabled": True},
             "audit": {"enabled": True},
             "emergency_protocols": {"enabled": True},
-            "communication": {"security_level": "high"}
+            "communication": {"security_level": "high"},
+            "compliance": {
+                "intrusion_detection_enabled": True,
+                "breach_notification_enabled": True,
+                "privacy_by_design": True,
+                "user_management_enabled": True,
+            },
         }
     
     def _get_secret_key(self) -> str:
@@ -281,7 +301,9 @@ class OrcaiSecurityStack:
         # 6. Secure Communication
         print("\n6. SECURE COMMUNICATION")
         print("-" * 40)
-        peer_pub_key = self.quantum_crypto.generate_keypair()[0]
+        peer_pub_key = (
+            x25519.X25519PrivateKey.generate().public_key().public_bytes_raw()
+        )
         channel = self.secure_comm.establish_secure_channel("peer123", peer_pub_key)
         print(f"  Channel established: {channel.channel_id}")
         print(f"  Protocol: {channel.protocol.value}")
@@ -290,25 +312,39 @@ class OrcaiSecurityStack:
         print("\n" + "=" * 80)
 
 
-def main():
-    """Main entry point"""
-    # Initialize the security stack
-    stack = OrcaiSecurityStack()
-    
-    # Demonstrate capabilities
-    stack.demonstrate_capabilities()
-    
-    # Run security health check
-    stack.run_security_health_check()
-    
-    # Run compliance audit
-    stack.run_compliance_audit()
-    
+def main(argv=None) -> int:
+    """Command-line entry point."""
+    parser = argparse.ArgumentParser(description="Orcai25 security stack")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("all", "demo", "health", "compliance"),
+        default="all",
+    )
+    parser.add_argument("--config", help="Path to a security configuration file")
+    args = parser.parse_args(argv)
+
+    stack = OrcaiSecurityStack(args.config)
+
+    if args.command in ("all", "demo"):
+        stack.demonstrate_capabilities()
+
+    exit_code = 0
+    if args.command in ("all", "health"):
+        health = stack.run_security_health_check()
+        if health["overall_status"] != "healthy":
+            exit_code = 1
+
+    if args.command in ("all", "compliance"):
+        compliance = stack.run_compliance_audit()
+        if any(report["violations"] for report in compliance.values()):
+            exit_code = 1
+
     print("\n" + "=" * 80)
-    print("ORCAI25 SECURITY STACK - READY FOR OPERATION")
-    print("All systems operational. Future-proof security active.")
+    print("ORCAI25 SECURITY STACK CHECKS COMPLETE")
     print("=" * 80 + "\n")
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
