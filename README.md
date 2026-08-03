@@ -1,20 +1,24 @@
 # Orcai25 WatsonX Edition
 
-## 🛡️ Enterprise Cybersecurity Stack for the Future
+## 🛡️ AI Security Reference Stack
 
-A comprehensive, next-generation cybersecurity framework specifically designed for AI systems with emergency procedures for rogue AI containment. Built with cutting-edge security protocols that comply with all major audit standards.
+An executable reference framework for AI security controls and emergency
+containment. It includes real cryptographic primitives and automated control
+checks, but it is not a compliance certification or a complete production
+platform. Review [`PRODUCTION_CHECKLIST.md`](PRODUCTION_CHECKLIST.md) before
+deployment.
 
 ## 🎯 Overview
 
-Orcai25 is a full enterprise cybersecurity stack that implements:
+Orcai25 demonstrates:
 
 - **Zero Trust Architecture** - Never trust, always verify
-- **Quantum-Resistant Cryptography** - Future-proof against quantum attacks
-- **AI Threat Detection** - Advanced ML-based threat identification
+- **Quantum-Resistant Cryptography** - FIPS-standard post-quantum KEM and signatures
+- **AI Threat Detection** - Deterministic reference rules for suspicious behavior
 - **Rogue AI Containment** - Emergency protocols for dangerous AI behavior
-- **Comprehensive Audit Compliance** - SOC2, ISO 27001, GDPR, HIPAA ready
+- **Compliance Control Checks** - Executable SOC 2, ISO 27001, GDPR, and HIPAA configuration checks
 - **Real-Time Security Monitoring** - Continuous threat detection and alerting
-- **Secure Communication Protocols** - Modern encryption with perfect forward secrecy
+- **Secure Communication Protocols** - Authenticated application-message envelopes
 
 ## 🚀 Key Features
 
@@ -27,12 +31,10 @@ Orcai25 is a full enterprise cybersecurity stack that implements:
 - Session management with automatic timeout
 
 ### ⚛️ Quantum-Resistant Cryptography
-- CRYSTALS-KYBER-1024 (NIST PQC standard)
-- Lattice-based encryption algorithms
-- SHA3-512 quantum-resistant hashing
-- Hash-based digital signatures (SPHINCS+)
-- Hybrid encryption for efficiency
-- Quantum-safe key derivation
+- ML-KEM-1024 key encapsulation (FIPS 203)
+- ML-DSA-87 digital signatures (FIPS 204)
+- AES-256-GCM hybrid payload encryption
+- SHA3-512 and HKDF key derivation
 
 ### 🤖 AI Threat Detection
 - Adversarial attack pattern recognition
@@ -54,12 +56,9 @@ Orcai25 is a full enterprise cybersecurity stack that implements:
 - Deception detection
 
 ### 📋 Audit & Compliance
-- Tamper-proof audit logging
-- Cryptographic chain of audit entries
-- SOC 2 Type II compliance
-- ISO 27001 compliance
-- GDPR compliance
-- HIPAA compliance
+- HMAC-linked in-memory audit logging
+- Cryptographic integrity checks for audit entries
+- SOC 2, ISO 27001, GDPR, and HIPAA control checks
 - Automated compliance checking
 - Violation reporting
 
@@ -73,13 +72,14 @@ Orcai25 is a full enterprise cybersecurity stack that implements:
 - Metrics tracking and analysis
 
 ### 🔒 Secure Communication
-- TLS 1.3 with perfect forward secrecy
-- Authenticated encryption (AEAD)
+- X25519 ephemeral key agreement
+- AES-256-GCM or ChaCha20-Poly1305 authenticated encryption
 - Replay attack prevention
-- Automatic key rotation
-- Certificate pinning
-- Mutual TLS support
+- Channel and timestamp binding
 - Secure channel management
+
+Transport TLS, certificate validation, and peer-key authentication must be
+provided by the deployment.
 
 ## 🏗️ Architecture
 
@@ -115,9 +115,23 @@ Orcai25 Security Stack
 git clone https://github.com/NaTo1000/Orcai25-watsonX-edition.git
 cd Orcai25-watsonX-edition
 
-# Run the security stack
-python orcai_security.py
+# Install pinned dependencies and run a health check
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install --requirement requirements.txt
+python orcai_security.py health
 ```
+
+Or run the hardened container:
+
+```bash
+docker compose build
+docker compose run --rm orcai
+```
+
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for runtime options and
+[`docs/DELIVERY.md`](docs/DELIVERY.md) for approved publishing, standalone
+image distribution, and rollback.
 
 ## 🔧 Configuration
 
@@ -132,7 +146,7 @@ Edit `config/security_config.json` to customize security settings:
     },
     "quantum_crypto": {
       "enabled": true,
-      "algorithm": "CRYSTALS-KYBER-1024"
+      "algorithm": "ML-KEM-1024"
     },
     "encryption": {
       "enabled": true,
@@ -231,7 +245,7 @@ report = stack.compliance_checker.check_compliance(
     ComplianceStandard.SOC2,
     system_config
 )
-print(f"SOC2 Compliance: {report['compliance_score']:.1%}")
+print(f"SOC2 control score: {report['compliance_score']:.1%}")
 ```
 
 ### Security Monitoring
@@ -255,16 +269,16 @@ alerts = stack.security_monitor.get_active_alerts(
 health = stack.run_security_health_check()
 ```
 
-## 🔍 Security Protocols That Don't Comply with Standard Audits
+## 🔍 Security Protocols Requiring Additional Audit Review
 
 ⚠️ **IMPORTANT SECURITY NOTICE** ⚠️
 
 The following protocols require special attention and may need custom audit procedures:
 
 ### 1. Quantum-Resistant Cryptography
-- **Issue**: Uses CRYSTALS-KYBER and SHA3-512 which may not be in standard audit checklists yet
-- **Mitigation**: Provide documentation showing NIST PQC standardization
-- **Audit Approach**: Demonstrate cryptographic algorithm validation and security proofs
+- **Issue**: ML-KEM and ML-DSA adoption may require updated audit procedures
+- **Mitigation**: Document FIPS 203/FIPS 204 usage and library validation
+- **Audit Approach**: Review key lifecycle, backend support, and interoperability
 
 ### 2. Rogue AI Containment Protocols
 - **Issue**: Emergency AI shutdown procedures are novel and not covered by traditional security audits
@@ -288,14 +302,16 @@ The following protocols require special attention and may need custom audit proc
 
 ## 🛡️ Compliance Matrix
 
-| Standard | Compliance Score | Status |
+| Standard | Implementation | Status |
 |----------|-----------------|---------|
-| SOC 2 Type II | ✅ High | Compliant with controls |
-| ISO 27001 | ✅ High | Meets requirements |
-| GDPR | ✅ High | Privacy by design |
-| HIPAA | ✅ High | Technical safeguards met |
-| PCI DSS | 🔄 Medium | Additional controls needed |
-| NIST CSF | ✅ High | Framework aligned |
+| SOC 2 Type II | Configuration checks | Reference only |
+| ISO 27001 | Configuration checks | Reference only |
+| GDPR | Configuration checks | Reference only |
+| HIPAA | Configuration checks | Reference only |
+| PCI DSS | Not implemented | External assessment required |
+| NIST CSF | Not implemented | External assessment required |
+
+Passing these checks does not establish regulatory compliance.
 
 ## 🚦 Emergency Response Levels
 
@@ -320,21 +336,23 @@ The following protocols require special attention and may need custom audit proc
 
 - **Encryption**: AES-256-GCM, ChaCha20-Poly1305
 - **Hashing**: SHA3-512 (quantum-resistant)
-- **Key Exchange**: ECDHE-X25519, CRYSTALS-KYBER
-- **Signatures**: Ed25519, SPHINCS+
-- **TLS**: Version 1.3 minimum
-- **Perfect Forward Secrecy**: Required
+- **Post-quantum KEM**: ML-KEM-1024
+- **Post-quantum signatures**: ML-DSA-87
+- **Application key agreement**: X25519
+- **Transport TLS**: External deployment requirement
 
 ## 🧪 Testing
 
 ```bash
-# Run security stack demonstration
-python orcai_security.py
+# Run the unit suite and CLI checks
+python -m unittest discover -s tests -v
+python -m compileall -q orcai_security.py core audit emergency_protocols monitoring tests
+python orcai_security.py health
 
-# Run specific component tests
-python -m core.zero_trust_architecture
-python -m core.ai_threat_detection
-python -m emergency_protocols.rogue_ai_containment
+# Build and execute the container
+docker build -t orcai25:local .
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges orcai25:local
 ```
 
 ## 🤝 Contributing

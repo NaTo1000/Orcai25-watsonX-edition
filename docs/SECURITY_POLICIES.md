@@ -27,7 +27,7 @@ Applies to all users, services, and AI systems accessing Orcai25 resources.
 ## Encryption Policy
 
 ### Purpose
-Ensure all data is protected using quantum-resistant encryption.
+Define approved cryptographic controls for protected data.
 
 ### Encryption Standards
 
@@ -38,14 +38,18 @@ Ensure all data is protected using quantum-resistant encryption.
 
 #### Data in Transit
 - Protocol: TLS 1.3 minimum
-- Key Exchange: ECDHE-X25519 or CRYSTALS-KYBER
+- Key Exchange: X25519 for the application envelope; ML-KEM-1024 for post-quantum encapsulation
 - Perfect Forward Secrecy: Required
 - Certificate Pinning: Enabled
 
 #### Quantum-Resistant Cryptography
-- Post-quantum algorithms: CRYSTALS-KYBER-1024
-- Signatures: SPHINCS+ or equivalent
-- Future-proof: Compliant with NIST PQC standards
+- Post-quantum key encapsulation: ML-KEM-1024 (FIPS 203)
+- Post-quantum signatures: ML-DSA-87 (FIPS 204)
+- Library: pinned `cryptography` release with backend support verified in CI
+
+TLS termination, certificate pinning, peer identity, key storage, and key
+rotation are deployment controls; the application envelope does not provide
+them by itself.
 
 ---
 

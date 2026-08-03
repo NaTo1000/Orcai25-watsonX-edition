@@ -1,355 +1,150 @@
 # Deployment Guide
 
-## Prerequisites
+Orcai25 currently runs as a one-shot command-line workload. It does not expose
+an HTTP server or a long-running health endpoint.
 
-- Python 3.8 or higher
-- 2GB RAM minimum (4GB recommended)
-- Network connectivity for threat intelligence feeds
-- Secure key management system (HSM, AWS KMS, or HashiCorp Vault recommended)
+## Requirements
 
-## Installation
+- Python 3.10 or newer for local execution
+- Docker 24 or newer for container execution
+- An external key manager, immutable audit sink, TLS terminator, and monitoring
+  integrations before production use
 
-### 1. Clone Repository
-
-```bash
-git clone https://github.com/NaTo1000/Orcai25-watsonX-edition.git
-cd Orcai25-watsonX-edition
-```
-
-### 2. Configuration
-
-Edit `config/security_config.json` to match your environment:
-
-```json
-{
-  "security": {
-    "zero_trust": {
-      "enabled": true,
-      "mfa_required_for_high_trust": true,
-      "session_timeout_seconds": 3600
-    },
-    "encryption": {
-      "enabled": true,
-      "quantum_resistant": true
-    }
-  },
-  "emergency_protocols": {
-    "emergency_contacts": [
-      "your-security-team@example.com"
-    ]
-  }
-}
-```
-
-### 3. Initialize Security Stack
+## Local Python
 
 ```bash
-python orcai_security.py
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install --requirement requirements.txt
+
+python orcai_security.py health
+python orcai_security.py demo
+python orcai_security.py compliance
+python orcai_security.py all
 ```
 
-## Production Deployment
-
-### Environment Setup
-
-1. **Secure Key Management**
-   - Use HSM or cloud KMS for secret keys
-   - Rotate keys regularly
-   - Never commit keys to source control
-
-2. **Network Configuration**
-   - Enable TLS 1.3 for all communications
-   - Configure firewall rules
-   - Set up network segmentation
-
-3. **Monitoring Integration**
-   - Connect to SIEM system
-   - Configure alerting channels
-   - Set up log aggregation
-
-### Docker Deployment
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-COPY . /app
-
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Run security stack
-CMD ["python", "orcai_security.py"]
-```
-
-Build and run:
+Use an alternate configuration:
 
 ```bash
-docker build -t orcai-security:latest .
-docker run -d \
-  -v /path/to/config:/app/config \
-  -v /path/to/logs:/app/logs \
-  --name orcai-security \
-  orcai-security:latest
+python orcai_security.py health --config /secure/path/security_config.json
 ```
 
-### Kubernetes Deployment
+The default configuration is resolved relative to `orcai_security.py`, not the
+current working directory.
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: orcai-security
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: orcai-security
-  template:
-    metadata:
-      labels:
-        app: orcai-security
-    spec:
-      containers:
-      - name: orcai-security
-        image: orcai-security:latest
-        volumeMounts:
-        - name: config
-          mountPath: /app/config
-        - name: secrets
-          mountPath: /app/secrets
-          readOnly: true
-      volumes:
-      - name: config
-        configMap:
-          name: orcai-config
-      - name: secrets
-        secret:
-          secretName: orcai-secrets
-```
+## Local Docker Image
 
-## Integration
-
-### Integrating with Existing Systems
-
-#### 1. Zero Trust Authentication
-
-```python
-from core.zero_trust_architecture import ZeroTrustEngine, SecurityContext, TrustLevel
-import time
-
-# Initialize
-zero_trust = ZeroTrustEngine(secret_key="your-secret-key")
-
-# In your authentication handler
-def authenticate_request(request):
-    context = SecurityContext(
-        user_id=request.user_id,
-        device_id=request.device_id,
-        ip_address=request.ip_address,
-        timestamp=time.time(),
-        session_token=request.session_token,
-        trust_level=TrustLevel.MEDIUM,
-        mfa_verified=request.mfa_verified,
-        behavioral_score=calculate_behavior_score(request)
-    )
-    
-    status = zero_trust.verify_request(context)
-    return status == VerificationStatus.VERIFIED
-```
-
-#### 2. AI System Monitoring
-
-```python
-from emergency_protocols.rogue_ai_containment import RogueAIDetector
-
-# Initialize detector
-detector = RogueAIDetector()
-
-# Register your AI system
-def shutdown_ai_system():
-    # Your shutdown logic
-    pass
-
-detector.register_system("my_ai_system", shutdown_ai_system)
-
-# Monitor behavior
-def monitor_ai():
-    metrics = {
-        "goal_adherence_score": ai_system.get_goal_adherence(),
-        "safety_check_bypasses": ai_system.get_safety_violations(),
-        "resource_acquisition_rate": ai_system.get_resource_usage()
-    }
-    
-    is_rogue = detector.check_for_rogue_behavior("my_ai_system", metrics)
-    if is_rogue:
-        # Handle emergency
-        print(f"Emergency level: {detector.emergency_level}")
-```
-
-#### 3. Audit Logging
-
-```python
-from audit.compliance_framework import AuditLogger, AuditEventType
-
-# Initialize logger
-audit_logger = AuditLogger(secret_key="your-secret-key")
-
-# Log events in your application
-def handle_sensitive_operation(user, resource, action):
-    # Perform operation
-    result = perform_operation(user, resource, action)
-    
-    # Log to audit trail
-    audit_logger.log_event(
-        AuditEventType.ACCESS,
-        actor=user.id,
-        resource=resource.id,
-        action=action,
-        result="success" if result else "failure",
-        details={"timestamp": time.time()}
-    )
-```
-
-## Monitoring and Maintenance
-
-### Health Checks
+Build the image:
 
 ```bash
-# Run health check
-curl http://localhost:8080/health
-
-# Expected response
-{
-  "status": "healthy",
-  "components": {
-    "zero_trust": "operational",
-    "encryption": "operational",
-    "monitoring": "operational"
-  }
-}
+docker build \
+  --build-arg VERSION=local \
+  --build-arg VCS_REF="$(git rev-parse HEAD)" \
+  --tag orcai25:local \
+  .
 ```
 
-### Log Monitoring
-
-Logs are output to stdout by default. In production:
-
-1. **Centralized Logging**: Forward to ELK, Splunk, or CloudWatch
-2. **Alert Configuration**: Set up alerts for critical events
-3. **Log Rotation**: Implement log rotation policies
-
-### Metrics Collection
-
-Key metrics to monitor:
-
-- Failed authentication attempts
-- Emergency alert frequency
-- Compliance check results
-- System resource usage
-- API error rates
-
-## Troubleshooting
-
-### Common Issues
-
-#### 1. Configuration Not Loading
+Run the default health command with the same restrictions used by CI:
 
 ```bash
-# Check config file exists
-ls -la config/security_config.json
-
-# Validate JSON
-python -m json.tool config/security_config.json
+docker run --rm \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  orcai25:local
 ```
 
-#### 2. Import Errors
+Run another command:
 
 ```bash
-# Ensure all __init__.py files exist
-find . -name "__init__.py"
-
-# Check Python path
-python -c "import sys; print(sys.path)"
+docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges orcai25:local compliance
 ```
 
-#### 3. Memory Issues
-
-Increase memory allocation:
+Mount a reviewed configuration file:
 
 ```bash
-# Docker
-docker run -m 4g orcai-security:latest
-
-# Kubernetes
-resources:
-  limits:
-    memory: "4Gi"
+docker run --rm \
+  --network none \
+  --read-only \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --mount type=bind,src=/secure/path/security_config.json,dst=/config.json,readonly \
+  orcai25:local health --config /config.json
 ```
 
-## Security Hardening
+The image runs as UID/GID `10001:10001`, writes no application state, and has
+no runtime package manager operation.
 
-### Production Security Checklist
+## Docker Compose
 
-- [ ] Secrets stored in secure key management system
-- [ ] TLS 1.3 enabled for all communications
-- [ ] Firewall rules configured
-- [ ] Network segmentation implemented
-- [ ] Monitoring integrated with SIEM
-- [ ] Log aggregation configured
-- [ ] Backup procedures tested
-- [ ] Incident response plan documented
-- [ ] Emergency contacts updated
-- [ ] Compliance requirements verified
-
-### Regular Maintenance
-
-- **Daily**: Review security alerts
-- **Weekly**: Compliance check, log analysis
-- **Monthly**: Security patches, key rotation
-- **Quarterly**: Full security audit, policy review
-- **Annually**: Penetration testing, disaster recovery drill
-
-## Scaling
-
-### Horizontal Scaling
-
-Deploy multiple instances behind load balancer:
+`compose.yaml` applies the non-root, read-only, capability-free local profile:
 
 ```bash
-# Scale with Kubernetes
-kubectl scale deployment orcai-security --replicas=5
-
-# Scale with Docker Swarm
-docker service scale orcai-security=5
+docker compose build
+docker compose run --rm orcai
 ```
 
-### Performance Optimization
+## Published Image
 
-1. **Caching**: Enable session caching
-2. **Database**: Use connection pooling
-3. **Async**: Leverage async operations
-4. **Monitoring**: Use dedicated monitoring instances
+Approved releases publish multi-architecture images to:
 
-## Backup and Recovery
+```text
+ghcr.io/nato1000/orcai25-watsonx-edition
+```
 
-### Backup Procedures
+Pin production consumption to the digest recorded in the release workflow
+summary:
 
-1. **Configuration**: Version control
-2. **Audit Logs**: Daily backup to immutable storage
-3. **Keys**: Secure backup with encryption
-4. **State**: Regular snapshots
+```bash
+docker pull ghcr.io/nato1000/orcai25-watsonx-edition@sha256:<digest>
+```
 
-### Recovery Procedures
+The mutable `stable` tag is an operator convenience and rollback pointer. Do
+not use it where immutable deployment references are required.
 
-1. Stop affected systems
-2. Restore from latest backup
-3. Verify integrity
-4. Resume operations
-5. Document incident
+## Standalone Distribution Archive
 
-## Support
+Each release uploads a `linux/amd64` Docker archive and SHA-256 checksum that do
+not require registry access after download:
 
-For deployment assistance:
-- Documentation: See `/docs` directory
-- Issues: GitHub Issues
-- Security: security@orcai25.example.com
-- Emergency: Use emergency contacts in config
+```bash
+sha256sum --check orcai25-<version>-linux-amd64.docker.tar.sha256
+docker image load --input orcai25-<version>-linux-amd64.docker.tar
+```
+
+The registry image remains the source for `linux/arm64` distribution.
+
+## Health and Compliance Commands
+
+The CLI exit code is the machine-readable result:
+
+- `health` returns nonzero when the overall health result is not healthy.
+- `compliance` returns nonzero when an implemented control check reports a
+  violation.
+- `all` runs the demonstration, health checks, and control checks.
+
+These checks describe this process and configuration only. They are not an
+external service readiness probe or compliance certification.
+
+## Production Integration Requirements
+
+Before embedding the library or wrapping it in a service:
+
+1. provision root secrets and private key bundles through an HSM, KMS, or Vault;
+2. persist audit, monitoring, and containment state in approved stores;
+3. authenticate peer public keys and enforce authorization policy;
+4. terminate TLS 1.3 and configure certificate lifecycle management;
+5. add network policy, rate limiting, workload identity, and egress controls;
+6. connect logs, metrics, alerts, and traces to operational systems; and
+7. complete the repository's production checklist and independent review.
+
+Do not deploy the current one-shot image as a Kubernetes `Service`; it has no
+listener. Add and test an explicit service interface before creating service,
+ingress, autoscaling, or availability manifests.
+
+## Release and Rollback
+
+Repository approvals, image publication, standalone artifacts, and rollback
+are documented in [`DELIVERY.md`](DELIVERY.md).
