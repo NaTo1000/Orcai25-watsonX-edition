@@ -1,0 +1,128 @@
+name: Roll back stable container image
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Existing version tag, sha-<commit>, or sha256 digest
+        required: true
+        type: string
+      confirmation:
+        description: Type ROLLBACK to confirm
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: container-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Approved rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+    steps:
+      - name: Validate rollback request
+        id: request
+        env:
+          TARGET: ${{ inputs.target }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRMATION}" != "ROLLBACK" ]]; then
+            echo "Confirmation must exactly match ROLLBACK." >&2
+            exit 1
+          fi
+          if [[ ! "${TARGET}" =~ ^([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7,40}|sha256:[0-9a-f]{64})$ ]]; then
+            echo "Target must be a version, commit tag, or image digest." >&2
+            exit 1
+          fi
+
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          if [[ "${TARGET}" == sha256:* ]]; then
+            target_ref="${image}@${TARGET}"
+          else
+            target_ref="${image}:${TARGET}"
+          fi
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "target_ref=${target_ref}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve target and current digests
+        id: digests
+        env:
+          IMAGE: ${{ steps.request.outputs.image }}
+          TARGET_REF: ${{ steps.request.outputs.target_ref }}
+        run: |
+          set -euo pipefail
+          target_digest="$(
+            docker buildx imagetools inspect "${TARGET_REF}" \
+              | awk '$1 == "Digest:" {print $2; exit}'
+          )"
+          if [[ ! "${target_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unable to resolve target digest." >&2
+            exit 1
+          fi
+
+          current_digest="$(
+            docker buildx imagetools inspect "${IMAGE}:stable" 2>/dev/null \
+              | awk '$1 == "Digest:" {print $2; exit}'
+          )" || true
+          echo "target=${target_digest}" >> "${GITHUB_OUTPUT}"
+          echo "current=${current_digest:-none}" >> "${GITHUB_OUTPUT}"
+
+      - name: Preserve current stable image
+        if: steps.digests.outputs.current != 'none' && steps.digests.outputs.current != steps.digests.outputs.target
+        env:
+          IMAGE: ${{ steps.request.outputs.image }}
+          CURRENT_DIGEST: ${{ steps.digests.outputs.current }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:rollback-backup-${GITHUB_RUN_ID}" \
+            "${IMAGE}@${CURRENT_DIGEST}"
+
+      - name: Promote rollback target
+        if: steps.digests.outputs.current != steps.digests.outputs.target
+        env:
+          IMAGE: ${{ steps.request.outputs.image }}
+          TARGET_DIGEST: ${{ steps.digests.outputs.target }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE}:stable" \
+            "${IMAGE}@${TARGET_DIGEST}"
+
+      - name: Verify and summarize rollback
+        env:
+          IMAGE: ${{ steps.request.outputs.image }}
+          TARGET_DIGEST: ${{ steps.digests.outputs.target }}
+          PREVIOUS_DIGEST: ${{ steps.digests.outputs.current }}
+        run: |
+          set -euo pipefail
+          stable_digest="$(
+            docker buildx imagetools inspect "${IMAGE}:stable" \
+              | awk '$1 == "Digest:" {print $2; exit}'
+          )"
+          test "${stable_digest}" = "${TARGET_DIGEST}"
+          {
+            echo "## Container rollback"
+            echo
+            echo "- Image: \`${IMAGE}:stable\`"
+            echo "- Previous digest: \`${PREVIOUS_DIGEST}\`"
+            echo "- Restored digest: \`${TARGET_DIGEST}\`"
+            echo "- Requested by: \`${GITHUB_ACTOR}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
