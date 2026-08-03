@@ -139,29 +139,34 @@ jobs:
           CURRENT_DIGEST: ${{ steps.digests.outputs.current }}
         run: |
           set -euo pipefail
-          if ! docker buildx imagetools create \
-            --tag "${IMAGE}:stable" \
-            "${IMAGE}@${TARGET_DIGEST}"; then
+          restore_current() {
             docker buildx imagetools create \
               --tag "${IMAGE}:stable" \
               "${IMAGE}@${CURRENT_DIGEST}"
+          }
+          if ! docker buildx imagetools create \
+            --tag "${IMAGE}:stable" \
+            "${IMAGE}@${TARGET_DIGEST}"; then
+            restore_current
             exit 1
           fi
           if ! docker buildx imagetools inspect --raw "${IMAGE}:stable" \
             > /tmp/restored-stable-index.json; then
-            docker buildx imagetools create \
-              --tag "${IMAGE}:stable" \
-              "${IMAGE}@${CURRENT_DIGEST}"
+            restore_current
+            exit 1
+          fi
+          if ! stable_inspect="$(
+            docker buildx imagetools inspect "${IMAGE}:stable" 2>&1
+          )"; then
+            echo "${stable_inspect}" >&2
+            restore_current
             exit 1
           fi
           stable_digest="$(
-            docker buildx imagetools inspect "${IMAGE}:stable" \
-              | awk '$1 == "Digest:" {print $2; exit}'
+            awk '$1 == "Digest:" {print $2; exit}' <<< "${stable_inspect}"
           )"
           if [[ "${stable_digest}" != "${TARGET_DIGEST}" ]]; then
-            docker buildx imagetools create \
-              --tag "${IMAGE}:stable" \
-              "${IMAGE}@${CURRENT_DIGEST}"
+            restore_current
             echo "Rollback verification failed; prior stable digest restored." >&2
             exit 1
           fi
@@ -186,9 +191,7 @@ jobs:
               raise SystemExit("Restored stable image failed platform validation")
           PY
           then
-            docker buildx imagetools create \
-              --tag "${IMAGE}:stable" \
-              "${IMAGE}@${CURRENT_DIGEST}"
+            restore_current
             echo "Rollback validation failed; prior stable digest restored." >&2
             exit 1
           fi
