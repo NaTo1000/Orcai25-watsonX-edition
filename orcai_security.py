@@ -5,6 +5,7 @@ Main initialization and orchestration module
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -24,7 +25,7 @@ from monitoring.security_monitor import SecurityMonitor, AlertSeverity
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "security_config.json"
-VERSION = "1.0.0"
+VERSION = os.environ.get("ORCAI_VERSION", "1.0.0")
 
 
 class OrcaiSecurityStack:

@@ -127,8 +127,6 @@ class SecureCommProtocol:
 
         channel.last_used = time.time()
         channel.message_count += 1
-        if channel.message_count % 1000 == 0:
-            self._rotate_session_key(channel_id)
         return ciphertext
 
     def receive_secure_message(
@@ -230,13 +228,6 @@ class SecureCommProtocol:
         if algorithm == "ChaCha20-Poly1305":
             return ChaCha20Poly1305(encryption_key)
         raise ValueError(f"Unsupported encryption algorithm: {algorithm}")
-
-    def _rotate_session_key(self, channel_id: str):
-        old_key = self.session_keys[channel_id]
-        self.session_keys[channel_id] = self._hkdf(
-            old_key, b"orcai25-key-rotation-v1", 32
-        )
-        print(f"[SECURE COMM] Rotated session key for channel {channel_id}")
 
     def close_channel(self, channel_id: str):
         """Close a channel and discard its in-memory key material."""

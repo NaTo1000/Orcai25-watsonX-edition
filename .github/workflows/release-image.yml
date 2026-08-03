@@ -5,8 +5,8 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: Semantic version to publish, without the v prefix
+      release_tag:
+        description: Existing semantic-version tag to publish, such as v1.2.3
         required: true
         type: string
       promote_stable:
@@ -16,7 +16,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
   packages: write
   id-token: write
   attestations: write
@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
 
       - name: Resolve release metadata
         id: release
@@ -42,20 +44,21 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
-          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
           INPUT_PROMOTE_STABLE: ${{ inputs.promote_stable }}
         run: |
           set -euo pipefail
           if [[ "${EVENT_NAME}" == "release" ]]; then
-            raw_version="${RELEASE_TAG}"
+            release_tag="${RELEASE_TAG}"
           else
-            raw_version="${INPUT_VERSION}"
+            release_tag="${INPUT_RELEASE_TAG}"
           fi
-          version="${raw_version#v}"
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Version must be a semantic version." >&2
+          if [[ ! "${release_tag}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must contain a semantic version." >&2
             exit 1
           fi
+          version="${release_tag#v}"
+          commit="$(git rev-parse HEAD)"
 
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           promote_stable=false
@@ -66,7 +69,9 @@ jobs:
           fi
 
           echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=${release_tag}" >> "${GITHUB_OUTPUT}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
           echo "promote_stable=${promote_stable}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up QEMU
@@ -89,11 +94,11 @@ jobs:
           images: ${{ steps.release.outputs.image }}
           tags: |
             type=raw,value=${{ steps.release.outputs.version }}
-            type=sha,format=long,prefix=sha-
+            type=raw,value=sha-${{ steps.release.outputs.commit }}
             type=raw,value=stable,enable=${{ steps.release.outputs.promote_stable }}
           labels: |
             org.opencontainers.image.version=${{ steps.release.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.commit }}
 
       - name: Build standalone Docker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -105,7 +110,7 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             VERSION=${{ steps.release.outputs.version }}
-            VCS_REF=${{ github.sha }}
+            VCS_REF=${{ steps.release.outputs.commit }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -132,6 +137,18 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+
+      - name: Attach standalone image to GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release upload "${RELEASE_TAG}" \
+            "/tmp/orcai25-${VERSION}-linux-amd64.docker.tar" \
+            "/tmp/orcai25-${VERSION}-linux-amd64.docker.tar.sha256" \
+            --clobber
 
       - name: Preserve current stable image
         if: steps.release.outputs.promote_stable == 'true'
@@ -163,7 +180,7 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           build-args: |
             VERSION=${{ steps.release.outputs.version }}
-            VCS_REF=${{ github.sha }}
+            VCS_REF=${{ steps.release.outputs.commit }}
             SOURCE_URL=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

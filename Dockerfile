@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.20
+# syntax=docker/dockerfile:1.20@sha256:26147acbda4f14c5add9946e2fd2ed543fc402884fd75146bd342a7f6271dc1d
 
 ARG PYTHON_IMAGE=python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 
@@ -26,6 +26,7 @@ LABEL org.opencontainers.image.title="Orcai25 WatsonX Edition" \
       org.opencontainers.image.licenses="LicenseRef-Proprietary"
 
 ENV PATH="/opt/venv/bin:${PATH}" \
+    ORCAI_VERSION="${VERSION}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
