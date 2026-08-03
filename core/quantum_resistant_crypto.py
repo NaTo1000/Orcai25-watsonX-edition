@@ -112,6 +112,8 @@ class QuantumResistantCrypto:
         """Verify an ML-DSA-87 signature."""
         try:
             signature_data = json.loads(signature.decode("utf-8"))
+            if not isinstance(signature_data, dict):
+                return False
             if (
                 signature_data.get("version") != self.KEY_BUNDLE_VERSION
                 or signature_data.get("algorithm") != self.SIGNATURE_ALGORITHM

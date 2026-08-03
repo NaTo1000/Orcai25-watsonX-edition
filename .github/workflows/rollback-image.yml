@@ -70,6 +70,37 @@ jobs:
           TARGET_REF: ${{ steps.request.outputs.target_ref }}
         run: |
           set -euo pipefail
+          docker buildx imagetools inspect --raw "${TARGET_REF}" \
+            > /tmp/rollback-target-index.json
+          python - /tmp/rollback-target-index.json <<'PY'
+          import json
+          import sys
+
+          index = json.load(open(sys.argv[1], encoding="utf-8"))
+          index_types = {
+              "application/vnd.oci.image.index.v1+json",
+              "application/vnd.docker.distribution.manifest.list.v2+json",
+          }
+          image_types = {
+              "application/vnd.oci.image.manifest.v1+json",
+              "application/vnd.docker.distribution.manifest.v2+json",
+          }
+          if index.get("mediaType") not in index_types:
+              raise SystemExit("Rollback target is not a multi-platform image index")
+          platforms = {
+              (
+                  manifest.get("platform", {}).get("os"),
+                  manifest.get("platform", {}).get("architecture"),
+              )
+              for manifest in index.get("manifests", [])
+              if manifest.get("mediaType") in image_types
+          }
+          required = {("linux", "amd64"), ("linux", "arm64")}
+          missing = required - platforms
+          if missing:
+              raise SystemExit(f"Rollback target is missing platforms: {sorted(missing)}")
+          PY
+
           target_digest="$(
             docker buildx imagetools inspect "${TARGET_REF}" \
               | awk '$1 == "Digest:" {print $2; exit}'
@@ -80,14 +111,18 @@ jobs:
           fi
 
           current_digest="$(
-            docker buildx imagetools inspect "${IMAGE}:stable" 2>/dev/null \
+            docker buildx imagetools inspect "${IMAGE}:stable" \
               | awk '$1 == "Digest:" {print $2; exit}'
-          )" || true
+          )"
+          if [[ ! "${current_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unable to resolve current stable digest; refusing rollback." >&2
+            exit 1
+          fi
           echo "target=${target_digest}" >> "${GITHUB_OUTPUT}"
-          echo "current=${current_digest:-none}" >> "${GITHUB_OUTPUT}"
+          echo "current=${current_digest}" >> "${GITHUB_OUTPUT}"
 
       - name: Preserve current stable image
-        if: steps.digests.outputs.current != 'none' && steps.digests.outputs.current != steps.digests.outputs.target
+        if: steps.digests.outputs.current != steps.digests.outputs.target
         env:
           IMAGE: ${{ steps.request.outputs.image }}
           CURRENT_DIGEST: ${{ steps.digests.outputs.current }}
@@ -101,10 +136,62 @@ jobs:
         env:
           IMAGE: ${{ steps.request.outputs.image }}
           TARGET_DIGEST: ${{ steps.digests.outputs.target }}
+          CURRENT_DIGEST: ${{ steps.digests.outputs.current }}
         run: |
-          docker buildx imagetools create \
+          set -euo pipefail
+          if ! docker buildx imagetools create \
             --tag "${IMAGE}:stable" \
-            "${IMAGE}@${TARGET_DIGEST}"
+            "${IMAGE}@${TARGET_DIGEST}"; then
+            docker buildx imagetools create \
+              --tag "${IMAGE}:stable" \
+              "${IMAGE}@${CURRENT_DIGEST}"
+            exit 1
+          fi
+          if ! docker buildx imagetools inspect --raw "${IMAGE}:stable" \
+            > /tmp/restored-stable-index.json; then
+            docker buildx imagetools create \
+              --tag "${IMAGE}:stable" \
+              "${IMAGE}@${CURRENT_DIGEST}"
+            exit 1
+          fi
+          stable_digest="$(
+            docker buildx imagetools inspect "${IMAGE}:stable" \
+              | awk '$1 == "Digest:" {print $2; exit}'
+          )"
+          if [[ "${stable_digest}" != "${TARGET_DIGEST}" ]]; then
+            docker buildx imagetools create \
+              --tag "${IMAGE}:stable" \
+              "${IMAGE}@${CURRENT_DIGEST}"
+            echo "Rollback verification failed; prior stable digest restored." >&2
+            exit 1
+          fi
+          if ! python - /tmp/restored-stable-index.json <<'PY'
+          import json
+          import sys
+
+          index = json.load(open(sys.argv[1], encoding="utf-8"))
+          platforms = {
+              (
+                  manifest.get("platform", {}).get("os"),
+                  manifest.get("platform", {}).get("architecture"),
+              )
+              for manifest in index.get("manifests", [])
+              if manifest.get("mediaType") in {
+                  "application/vnd.oci.image.manifest.v1+json",
+                  "application/vnd.docker.distribution.manifest.v2+json",
+              }
+          }
+          required = {("linux", "amd64"), ("linux", "arm64")}
+          if not required.issubset(platforms):
+              raise SystemExit("Restored stable image failed platform validation")
+          PY
+          then
+            docker buildx imagetools create \
+              --tag "${IMAGE}:stable" \
+              "${IMAGE}@${CURRENT_DIGEST}"
+            echo "Rollback validation failed; prior stable digest restored." >&2
+            exit 1
+          fi
 
       - name: Verify and summarize rollback
         env:

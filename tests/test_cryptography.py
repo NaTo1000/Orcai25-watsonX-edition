@@ -34,6 +34,9 @@ class QuantumResistantCryptoTests(unittest.TestCase):
                 self.public_key,
             )
         )
+        self.assertFalse(
+            self.crypto.verify_signature(message, b"[]", self.public_key)
+        )
 
     def test_hybrid_encryption_round_trip_and_tampering(self):
         plaintext = b"classified payload"

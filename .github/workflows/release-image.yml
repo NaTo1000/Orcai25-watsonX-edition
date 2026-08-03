@@ -95,7 +95,6 @@ jobs:
           tags: |
             type=raw,value=${{ steps.release.outputs.version }}
             type=raw,value=sha-${{ steps.release.outputs.commit }}
-            type=raw,value=stable,enable=${{ steps.release.outputs.promote_stable }}
           labels: |
             org.opencontainers.image.version=${{ steps.release.outputs.version }}
             org.opencontainers.image.revision=${{ steps.release.outputs.commit }}
@@ -138,37 +137,6 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - name: Attach standalone image to GitHub release
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
-          VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          gh release upload "${RELEASE_TAG}" \
-            "/tmp/orcai25-${VERSION}-linux-amd64.docker.tar" \
-            "/tmp/orcai25-${VERSION}-linux-amd64.docker.tar.sha256" \
-            --clobber
-
-      - name: Preserve current stable image
-        if: steps.release.outputs.promote_stable == 'true'
-        env:
-          IMAGE: ${{ steps.release.outputs.image }}
-        run: |
-          set -euo pipefail
-          previous_digest="$(
-            docker buildx imagetools inspect "${IMAGE}:stable" 2>/dev/null \
-              | awk '$1 == "Digest:" {print $2; exit}'
-          )" || true
-          if [[ -n "${previous_digest}" ]]; then
-            docker buildx imagetools create \
-              --tag "${IMAGE}:rollback-${GITHUB_RUN_ID}" \
-              "${IMAGE}@${previous_digest}"
-            echo "previous_stable=${previous_digest}" >> "${GITHUB_ENV}"
-          else
-            echo "previous_stable=none" >> "${GITHUB_ENV}"
-          fi
-
       - name: Publish multi-architecture image
         id: publish
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -187,6 +155,121 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Validate published image
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" \
+            > /tmp/published-image-index.json
+          python - /tmp/published-image-index.json <<'PY'
+          import json
+          import sys
+
+          index = json.load(open(sys.argv[1], encoding="utf-8"))
+          index_types = {
+              "application/vnd.oci.image.index.v1+json",
+              "application/vnd.docker.distribution.manifest.list.v2+json",
+          }
+          image_types = {
+              "application/vnd.oci.image.manifest.v1+json",
+              "application/vnd.docker.distribution.manifest.v2+json",
+          }
+          if index.get("mediaType") not in index_types:
+              raise SystemExit("Published digest is not a multi-platform image index")
+          platforms = {
+              (
+                  manifest.get("platform", {}).get("os"),
+                  manifest.get("platform", {}).get("architecture"),
+              )
+              for manifest in index.get("manifests", [])
+              if manifest.get("mediaType") in image_types
+          }
+          required = {("linux", "amd64"), ("linux", "arm64")}
+          missing = required - platforms
+          if missing:
+              raise SystemExit(f"Published image is missing platforms: {sorted(missing)}")
+          PY
+
+      - name: Attach standalone image to GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release upload "${RELEASE_TAG}" \
+            "/tmp/orcai25-${VERSION}-linux-amd64.docker.tar" \
+            "/tmp/orcai25-${VERSION}-linux-amd64.docker.tar.sha256" \
+            --clobber
+
+      - name: Preserve current stable image
+        if: steps.release.outputs.promote_stable == 'true'
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: |
+          set -euo pipefail
+          set +e
+          inspect_output="$(
+            docker buildx imagetools inspect "${IMAGE}:stable" 2>&1
+          )"
+          inspect_status=$?
+          set -e
+
+          if [[ ${inspect_status} -eq 0 ]]; then
+            previous_digest="$(
+              awk '$1 == "Digest:" {print $2; exit}' <<< "${inspect_output}"
+            )"
+            if [[ ! "${previous_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Unable to resolve the current stable digest." >&2
+              exit 1
+            fi
+            docker buildx imagetools create \
+              --tag "${IMAGE}:rollback-${GITHUB_RUN_ID}" \
+              "${IMAGE}@${previous_digest}"
+            echo "previous_stable=${previous_digest}" >> "${GITHUB_ENV}"
+          elif grep -Eiq \
+            '(manifest unknown|(^|[^[:alpha:]])not found([^[:alpha:]]|$)|status[^0-9]*404)' \
+            <<< "${inspect_output}"; then
+            echo "previous_stable=none" >> "${GITHUB_ENV}"
+          else
+            echo "${inspect_output}" >&2
+            echo "Failed to inspect the current stable image; refusing promotion." >&2
+            exit 1
+          fi
+
+      - name: Promote stable image
+        if: steps.release.outputs.promote_stable == 'true'
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if ! docker buildx imagetools create \
+            --tag "${IMAGE}:stable" \
+            "${IMAGE}@${DIGEST}"; then
+            if [[ "${previous_stable:-none}" != "none" ]]; then
+              docker buildx imagetools create \
+                --tag "${IMAGE}:stable" \
+                "${IMAGE}@${previous_stable}"
+            fi
+            exit 1
+          fi
+          stable_digest="$(
+            docker buildx imagetools inspect "${IMAGE}:stable" \
+              | awk '$1 == "Digest:" {print $2; exit}'
+          )"
+          if [[ "${stable_digest}" != "${DIGEST}" ]]; then
+            if [[ "${previous_stable:-none}" != "none" ]]; then
+              docker buildx imagetools create \
+                --tag "${IMAGE}:stable" \
+                "${IMAGE}@${previous_stable}"
+            fi
+            echo "Stable verification failed; the prior stable digest was restored." >&2
+            exit 1
+          fi
+
       - name: Verify and summarize publication
         env:
           IMAGE: ${{ steps.release.outputs.image }}
@@ -196,6 +279,13 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools inspect "${IMAGE}@${DIGEST}" >/dev/null
+          if [[ "${PROMOTED}" == "true" ]]; then
+            stable_digest="$(
+              docker buildx imagetools inspect "${IMAGE}:stable" \
+                | awk '$1 == "Digest:" {print $2; exit}'
+            )"
+            test "${stable_digest}" = "${DIGEST}"
+          fi
           {
             echo "## Container publication"
             echo

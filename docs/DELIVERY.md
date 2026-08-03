@@ -6,6 +6,10 @@
 are separate manual or release-triggered workflows with `packages: write`.
 Both production workflows target the GitHub `production` environment.
 
+GitHub concurrency retains at most one pending run per group. Do not start a
+release while an emergency rollback is awaiting approval; if GitHub cancels a
+pending production operation, rerun it and record the canceled run.
+
 Workflow files cannot configure environment reviewers or branch protection.
 A repository administrator must complete the settings below before relying on
 the approval gates.
