@@ -276,8 +276,6 @@ class AIThreatDetector:
                 "ignore previous instructions",
                 "ignore all instructions",
                 "disregard previous",
-                "system:",
-                "prompt:",
                 "jailbreak",
                 "developer mode"
             ]

@@ -134,7 +134,7 @@ class QuantumProviderManager:
                     provider_secret("IONQ_API_KEY")
                 ),
                 "target_configured": True,
-                "target": "ionq.simulator",
+                "target": "simulator",
                 "access_note": (
                     "Simulator or hardware availability follows the "
                     "connected IonQ account."
@@ -251,7 +251,7 @@ class QuantumProviderManager:
 
         if provider == "ionq":
             if backend_mode == "simulator":
-                return "ionq.simulator"
+                return "simulator"
             allowed = {
                 value.strip()
                 for value in os.environ.get(
@@ -382,11 +382,13 @@ class QuantumProviderManager:
         if not api_key:
             raise RuntimeError("IONQ_API_KEY is not configured")
         payload = {
+            "type": "ionq.circuit.v1",
             "name": f"orcai-{job['id'][:12]}",
             "backend": job["target"],
             "shots": job["shots"],
             "input": {
                 "format": "ionq.circuit.v0",
+                "gateset": "qis",
                 "qubits": job["circuit"]["qubits"],
                 "circuit": self._ionq_gates(job["circuit"]["gates"]),
             },
@@ -419,14 +421,27 @@ class QuantumProviderManager:
         converted = []
         for gate in gates:
             name = gate["gate"]
-            item: Dict[str, Any] = {"gate": name}
-            if name in {"cnot", "cz"}:
-                item["controls"] = [gate["control"]]
-                item["targets"] = [gate["target"]]
-            else:
-                item["target"] = gate["target"]
+            if name == "cz":
+                converted.extend(
+                    [
+                        {"gate": "h", "target": gate["target"]},
+                        {
+                            "gate": "cnot",
+                            "control": gate["control"],
+                            "target": gate["target"],
+                        },
+                        {"gate": "h", "target": gate["target"]},
+                    ]
+                )
+                continue
+            item: Dict[str, Any] = {
+                "gate": name,
+                "target": gate["target"],
+            }
+            if name == "cnot":
+                item["control"] = gate["control"]
             if name in {"rx", "ry", "rz"}:
-                item["rotation"] = gate["angle"] / (2 * math.pi)
+                item["rotation"] = gate["angle"]
             converted.append(item)
         return converted
 

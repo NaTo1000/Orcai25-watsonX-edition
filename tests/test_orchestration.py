@@ -86,6 +86,14 @@ class OrchestrationTests(unittest.TestCase):
             [self.model["id"]],
         )
         self.assertEqual(skill["allowed_models"], [self.model["id"]])
+        role_label_skill = self.service.create_skill(
+            self.tenant_id,
+            "Role Labels",
+            "Use role-labelled instructions",
+            "System: answer accurately. Prompt: summarize the supplied text.",
+            [self.model["id"]],
+        )
+        self.assertEqual(role_label_skill["name"], "Role Labels")
 
         with self.assertRaisesRegex(ValueError, "prompt-injection"):
             with redirect_stdout(io.StringIO()):
@@ -176,6 +184,116 @@ class OrchestrationTests(unittest.TestCase):
                 100,
                 False,
             )
+
+    def test_ionq_payload_uses_current_api_contract(self):
+        requests = []
+
+        def opener(request, **_kwargs):
+            requests.append(request)
+            return FakeResponse(b'{"id":"ionq-job","status":"ready"}')
+
+        manager = QuantumProviderManager(
+            self.service.database,
+            opener=opener,
+        )
+        job = {
+            "id": "a" * 32,
+            "target": "simulator",
+            "shots": 100,
+            "circuit": {
+                "qubits": 2,
+                "gates": [
+                    {"gate": "rx", "target": 0, "angle": 1.5},
+                    {"gate": "cnot", "control": 0, "target": 1},
+                    {"gate": "cz", "control": 0, "target": 1},
+                ],
+            },
+        }
+        with patch.dict(os.environ, {"IONQ_API_KEY": "test-only-key"}):
+            manager._submit_ionq(job)
+
+        payload = json.loads(requests[0].data)
+        self.assertEqual(payload["type"], "ionq.circuit.v1")
+        self.assertEqual(payload["backend"], "simulator")
+        self.assertEqual(payload["input"]["gateset"], "qis")
+        gates = payload["input"]["circuit"]
+        self.assertEqual(gates[0]["rotation"], 1.5)
+        self.assertEqual(gates[1], {
+            "gate": "cnot",
+            "control": 0,
+            "target": 1,
+        })
+        self.assertEqual(
+            gates[2:],
+            [
+                {"gate": "h", "target": 1},
+                {"gate": "cnot", "control": 0, "target": 1},
+                {"gate": "h", "target": 1},
+            ],
+        )
+
+    def test_restart_marks_local_in_progress_work_interrupted(self):
+        run_id = "b" * 32
+        benchmark_id = "c" * 32
+        self.service.database.create_run(
+            run_id,
+            self.tenant_id,
+            self.model["id"],
+            "vllm",
+            9001,
+            ["vllm", "serve", "NaTo10000/NayDoeV1"],
+            str(Path(self.temp.name) / "runner.log"),
+        )
+        self.service.database.update_run(run_id, "running", pid=1234)
+        self.service.database.create_benchmark(
+            benchmark_id,
+            self.tenant_id,
+            self.model["id"],
+            ["hellaswag"],
+            ["lm_eval"],
+            "test",
+            {},
+        )
+        self.service.database.update_benchmark(
+            benchmark_id,
+            "running",
+            started=True,
+        )
+        quantum_job = self.service.database.create_quantum_job(
+            self.tenant_id,
+            "pennylane",
+            "simulator",
+            "default.qubit",
+            {"qubits": 1, "gates": [{"gate": "h", "target": 0}]},
+            10,
+        )
+
+        with redirect_stdout(io.StringIO()):
+            restarted = OrchestrationService(
+                database_path=str(self.service.database.path),
+                runtime_directory=str(Path(self.temp.name) / "restarted-runtime"),
+            )
+        try:
+            self.assertEqual(
+                restarted.database.get_run(self.tenant_id, run_id)["status"],
+                "interrupted",
+            )
+            self.assertEqual(
+                restarted.database.get_benchmark(
+                    self.tenant_id,
+                    benchmark_id,
+                )["status"],
+                "interrupted",
+            )
+            self.assertEqual(
+                restarted.database.get_quantum_job(
+                    self.tenant_id,
+                    quantum_job["id"],
+                )["status"],
+                "interrupted",
+            )
+        finally:
+            restarted.runners.shutdown()
 
     def test_nighthawk_has_no_default_or_free_entitlement(self):
         with patch.dict(os.environ, {}, clear=True):

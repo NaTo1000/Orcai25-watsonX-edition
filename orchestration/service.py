@@ -53,6 +53,7 @@ class OrchestrationService:
             str(root / "data" / "runtime"),
         )
         self.database = OrchestrationDatabase(data_path)
+        self.database.reconcile_interrupted_work()
         self.stack = OrcaiSecurityStack(security_config_path)
         self._tenant_context: ContextVar[Optional[str]] = ContextVar(
             "orcai_tenant_id",

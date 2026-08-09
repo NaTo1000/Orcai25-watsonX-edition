@@ -181,6 +181,43 @@ class OrchestrationDatabase:
         except OSError:
             pass
 
+    def reconcile_interrupted_work(self) -> Dict[str, int]:
+        """Mark local work left active by a previous service process."""
+        now = utc_now()
+        reason = "Orchestration service restarted before work completed"
+        with self._connect() as connection:
+            runs = connection.execute(
+                """
+                UPDATE runs
+                SET status = 'interrupted', error = ?, updated_at = ?
+                WHERE status IN ('starting', 'running')
+                """,
+                (reason, now),
+            ).rowcount
+            benchmarks = connection.execute(
+                """
+                UPDATE benchmarks
+                SET status = 'interrupted', error = ?,
+                    finished_at = COALESCE(finished_at, ?)
+                WHERE status IN ('queued', 'running')
+                """,
+                (reason, now),
+            ).rowcount
+            quantum_jobs = connection.execute(
+                """
+                UPDATE quantum_jobs
+                SET status = 'interrupted', error = ?,
+                    completed_at = COALESCE(completed_at, ?)
+                WHERE status = 'queued' AND provider_job_id IS NULL
+                """,
+                (reason, now),
+            ).rowcount
+        return {
+            "runs": runs,
+            "benchmarks": benchmarks,
+            "quantum_jobs": quantum_jobs,
+        }
+
     @staticmethod
     def _row(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
         return dict(row) if row else None
