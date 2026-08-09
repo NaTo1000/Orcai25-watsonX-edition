@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="NayDoeV1 model, skill, benchmark, and quantum orchestration control plane.">
+  <title>NayDoeV1 · Orchestration Conductor</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <header class="hero">
+    <nav class="nav shell" aria-label="Primary navigation">
+      <a class="brand" href="/">NAYDOE<span>V1</span></a>
+      <div class="nav-links">
+        <a href="#identity">Identity</a>
+        <a href="#control">Control</a>
+        <a href="/api/docs">API</a>
+      </div>
+    </nav>
+    <div class="hero-grid shell">
+      <div>
+        <p class="eyebrow">ORCAI25 CONTROL PLANE</p>
+        <h1>Conductor of<br><em>Orchestrated Symphonies</em></h1>
+        <p class="lead">One audited control surface for models, skills, reproducible benchmarks, and credential-backed quantum pipelines.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#control">Open control room</a>
+          <span id="health-status" class="status-pill">Checking engine…</span>
+        </div>
+      </div>
+      <aside class="identity-card" id="identity">
+        <p class="card-label">PLATFORM REGISTRATION</p>
+        <h2 id="profile-name">NayDoeV1</h2>
+        <dl>
+          <div><dt>Model</dt><dd id="profile-model">Pending bootstrap</dd></div>
+          <div><dt>Serial</dt><dd id="profile-serial">Pending bootstrap</dd></div>
+          <div><dt>Registry</dt><dd id="profile-registry">Orcai25 tenant registry</dd></div>
+          <div><dt>Hub source</dt><dd id="profile-source">Unverified</dd></div>
+        </dl>
+        <p class="hash" id="profile-hash"></p>
+      </aside>
+    </div>
+  </header>
+
+  <main id="control" class="shell control">
+    <section class="auth-panel">
+      <div>
+        <p class="eyebrow">ZERO-TRUST ENTRY</p>
+        <h2>Connect your API key</h2>
+        <p>The key remains in this browser tab only and is sent in the <code>X-API-Key</code> header.</p>
+      </div>
+      <form id="auth-form" class="inline-form">
+        <label class="sr-only" for="api-key">API key</label>
+        <input id="api-key" type="password" autocomplete="off" placeholder="orc_live_…" required>
+        <button class="button primary" type="submit">Connect</button>
+        <button class="button quiet" id="disconnect" type="button">Clear</button>
+      </form>
+      <p id="message" class="message" role="status"></p>
+    </section>
+
+    <section id="dashboard" class="dashboard" hidden>
+      <div class="tabs" role="tablist" aria-label="Control room sections">
+        <button class="tab active" data-panel="models-panel" type="button">Models</button>
+        <button class="tab" data-panel="skills-panel" type="button">Skills</button>
+        <button class="tab" data-panel="benchmarks-panel" type="button">Benchmarks</button>
+        <button class="tab" data-panel="quantum-panel" type="button">Quantum</button>
+        <button class="tab" data-panel="events-panel" type="button">Audit</button>
+      </div>
+
+      <section class="panel active" id="models-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">HUGGING FACE MENU</p><h2>Model runners</h2></div>
+          <button class="button secondary" id="refresh-models" type="button">Refresh NaTo10000</button>
+        </div>
+        <div id="models" class="card-grid"></div>
+        <div class="split-card">
+          <form id="runner-form">
+            <h3>Start an allowlisted runner</h3>
+            <label>Model<select id="runner-model" required></select></label>
+            <label>Engine<select id="runner-engine"><option value="vllm">vLLM</option><option value="llama_cpp">llama.cpp</option></select></label>
+            <label>Local port<input id="runner-port" type="number" min="1024" max="65535" value="8001"></label>
+            <button class="button primary" type="submit">Start runner</button>
+          </form>
+          <div><h3>Active and recent runs</h3><div id="runs" class="list"></div></div>
+        </div>
+      </section>
+
+      <section class="panel" id="skills-panel">
+        <div class="section-heading"><div><p class="eyebrow">DECLARATIVE, NOT EXECUTABLE</p><h2>Skills creator</h2></div></div>
+        <div class="split-card">
+          <form id="skill-form">
+            <label>Name<input id="skill-name" maxlength="64" required></label>
+            <label>Description<textarea id="skill-description" maxlength="500" required></textarea></label>
+            <label>System prompt<textarea id="skill-prompt" maxlength="12000" rows="7" required></textarea></label>
+            <label>Allowed model<select id="skill-model" required></select></label>
+            <button class="button primary" type="submit">Create safe skill</button>
+          </form>
+          <div><h3>Registered skills</h3><div id="skills" class="list"></div></div>
+        </div>
+      </section>
+
+      <section class="panel" id="benchmarks-panel">
+        <div class="section-heading"><div><p class="eyebrow">MEASURED EVIDENCE ONLY</p><h2>Real benchmark runs</h2></div></div>
+        <div class="split-card">
+          <form id="benchmark-form">
+            <label>Model<select id="benchmark-model" required></select></label>
+            <fieldset>
+              <legend>lm-evaluation-harness tasks</legend>
+              <label class="check"><input type="checkbox" name="task" value="arc_challenge" checked> ARC Challenge</label>
+              <label class="check"><input type="checkbox" name="task" value="hellaswag" checked> HellaSwag</label>
+              <label class="check"><input type="checkbox" name="task" value="gsm8k" checked> GSM8K</label>
+              <label class="check"><input type="checkbox" name="task" value="mmlu"> MMLU</label>
+            </fieldset>
+            <label>Sample limit (optional)<input id="benchmark-limit" type="number" min="1" max="10000"></label>
+            <button class="button primary" type="submit">Queue measured benchmark</button>
+          </form>
+          <div><h3>Benchmark evidence</h3><div id="benchmarks" class="list"></div></div>
+        </div>
+      </section>
+
+      <section class="panel" id="quantum-panel">
+        <div class="section-heading"><div><p class="eyebrow">CREDENTIAL-BACKED PIPELINES</p><h2>Quantum engine</h2></div></div>
+        <div id="quantum-providers" class="card-grid"></div>
+        <div class="split-card">
+          <form id="quantum-form">
+            <label>Provider<select id="quantum-provider">
+              <option value="pennylane">PennyLane local</option>
+              <option value="ionq">IonQ</option>
+              <option value="rigetti">Rigetti</option>
+              <option value="ibm_nighthawk">IBM Nighthawk</option>
+            </select></label>
+            <label>Mode<select id="quantum-mode"><option value="simulator">Simulator</option><option value="hardware">Hardware</option></select></label>
+            <label>Allowlisted target (hardware)<input id="quantum-target" maxlength="128" placeholder="Configured backend name"></label>
+            <label>Shots<input id="quantum-shots" type="number" min="1" max="10000" value="1024"></label>
+            <label>Circuit JSON<textarea id="quantum-circuit" rows="8">{"qubits":2,"gates":[{"gate":"h","target":0},{"gate":"cnot","control":0,"target":1}]}</textarea></label>
+            <label class="check"><input id="quantum-confirm" type="checkbox"> I confirm hardware execution may incur provider charges</label>
+            <button class="button primary" type="submit">Submit quantum job</button>
+          </form>
+          <div><h3>Quantum jobs</h3><div id="quantum-jobs" class="list"></div></div>
+        </div>
+      </section>
+
+      <section class="panel" id="events-panel">
+        <div class="section-heading"><div><p class="eyebrow">TENANT-SCOPED</p><h2>Security event trail</h2></div><button class="button secondary" id="refresh-events" type="button">Refresh</button></div>
+        <div id="events" class="event-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="shell footer">
+    <p>NayDoeV1 identities are issued within the Orcai25 registry. External provider recognition and hardware entitlement require verification by the named provider.</p>
+  </footer>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

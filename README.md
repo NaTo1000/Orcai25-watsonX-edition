@@ -142,6 +142,40 @@ Edit `config/security_config.json` to customize security settings:
 }
 ```
 
+## 🎼 NayDoeV1 VPS Orchestration
+
+The repository now includes an integrated orchestration service with:
+
+- A dedicated NayDoeV1 website and FastAPI backend
+- Hashed, tenant-scoped API keys
+- A platform-issued model number, unique serial number, and registration hash
+- Live Hugging Face discovery prioritizing `NaTo10000`
+- Copy/paste commands and allowlisted vLLM/llama.cpp process control
+- A declarative skills creator
+- Evidence-preserving `lm-evaluation-harness` comparisons
+- PennyLane, IonQ, Rigetti, and IBM Nighthawk provider adapters
+- Persistent SQLite jobs and tenant-scoped security events
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+ORCAI_DATABASE_PATH=./data/orchestration.db \
+  .venv/bin/python -m orchestration init \
+  --tenant-name "NayDoeV1 Operations"
+
+ORCAI_DATABASE_PATH=./data/orchestration.db \
+  .venv/bin/python -m orchestration serve
+```
+
+The bootstrap command displays the API key once; only its `scrypt` hash is
+stored. See [`docs/VPS_ORCHESTRATION.md`](docs/VPS_ORCHESTRATION.md) for TLS,
+systemd, Nginx, model runner, benchmark, and quantum-provider setup.
+
+NayDoeV1's identity is issued by the Orcai25 tenant registry. Public Hub
+verification, external recognition, benchmark scores, and paid quantum
+hardware access are never fabricated.
+
 ## 📖 Usage Examples
 
 ### Initialize the Security Stack

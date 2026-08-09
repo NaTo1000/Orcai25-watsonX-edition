@@ -1,0 +1,35 @@
+[Unit]
+Description=NayDoeV1 Orcai25 Orchestration Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orcai
+Group=orcai
+WorkingDirectory=/opt/orcai25
+EnvironmentFile=-/etc/orcai25/orchestrator.env
+Environment=ORCAI_DATABASE_PATH=/var/lib/orcai25/orchestration.db
+Environment=ORCAI_RUNTIME_DIRECTORY=/var/lib/orcai25/runtime
+Environment=HF_HOME=/var/lib/orcai25/huggingface
+ExecStart=/opt/orcai25/.venv/bin/python -m orchestration serve --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+StateDirectory=orcai25
+LogsDirectory=orcai25
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/orcai25 /var/log/orcai25
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

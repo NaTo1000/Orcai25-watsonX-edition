@@ -229,6 +229,21 @@ class OrcaiSecurityStack:
     def _get_secret_key(self) -> str:
         """Get secret key for cryptographic operations"""
         import secrets
+        secret_file = os.environ.get("ORCAI_SECURITY_SECRET_FILE")
+        if secret_file:
+            try:
+                value = Path(secret_file).read_text(
+                    encoding="utf-8"
+                ).strip()
+            except OSError as exc:
+                raise RuntimeError(
+                    "Could not read ORCAI_SECURITY_SECRET_FILE"
+                ) from exc
+            if len(value) < 32:
+                raise RuntimeError(
+                    "ORCAI security secret must contain at least 32 characters"
+                )
+            return value
         return os.environ.get("ORCAI_SECURITY_SECRET") or secrets.token_hex(32)
 
     def _route_security_event(self, event: SecurityEvent):
@@ -316,7 +331,7 @@ class OrcaiSecurityStack:
         if not self.config["security"]["zero_trust"]["enabled"]:
             raise RuntimeError("Zero Trust verification is disabled")
 
-        status = self.verify_access(context)
+        status = self.zero_trust.verify_request(context)
         if status != VerificationStatus.VERIFIED:
             return status
 
@@ -600,7 +615,7 @@ class OrcaiSecurityStack:
             mfa_verified=True,
             behavioral_score=0.8
         )
-        status = self.zero_trust.verify_request(context)
+        status = self.verify_access(context)
         print(f"  Request verification: {status.value}")
         print(f"  Trust level: {context.trust_level.name}")
         print(f"  MFA verified: {context.mfa_verified}")
@@ -681,14 +696,21 @@ def main():
     stack.demonstrate_capabilities()
     
     # Run security health check
-    stack.run_security_health_check()
+    health = stack.run_security_health_check()
     
     # Run compliance audit
     stack.run_compliance_audit()
     
     print("\n" + "=" * 80)
-    print("ORCAI25 SECURITY STACK - READY FOR OPERATION")
-    print("All systems operational. Future-proof security active.")
+    if health["overall_status"] == "healthy":
+        print("ORCAI25 SECURITY STACK - READY FOR OPERATION")
+        print("All configured health checks passed.")
+    else:
+        print("ORCAI25 SECURITY STACK - OPERATOR REVIEW REQUIRED")
+        print(
+            f"Health status is {health['overall_status'].upper()}; "
+            "review and acknowledge demonstration alerts."
+        )
     print("=" * 80 + "\n")
 
 

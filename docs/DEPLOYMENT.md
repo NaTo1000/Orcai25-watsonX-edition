@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- Python 3.10 or higher
 - 2GB RAM minimum (4GB recommended)
 - Network connectivity for threat intelligence feeds
 - Secure key management system (HSM, AWS KMS, or HashiCorp Vault recommended)
@@ -48,6 +48,10 @@ python orcai_security.py
 ```
 
 ## Production Deployment
+
+For the NayDoeV1 website, API-key SaaS backend, model runners, benchmarks,
+skills creator, and quantum provider adapters, use
+[`VPS_ORCHESTRATION.md`](VPS_ORCHESTRATION.md).
 
 ### Environment Setup
 

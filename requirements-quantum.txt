@@ -1,0 +1,4 @@
+pennylane==0.45.1
+pyquil==4.17.0
+qiskit==2.5.1
+qiskit-ibm-runtime==0.48.0

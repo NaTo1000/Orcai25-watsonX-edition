@@ -65,3 +65,10 @@ coverage.xml
 *.bak
 tmp/
 temp/
+
+# Orchestration runtime state
+data/
+*.db
+*.db-shm
+*.db-wal
+orchestrator.env
