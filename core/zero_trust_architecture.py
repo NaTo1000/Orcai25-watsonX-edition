@@ -12,6 +12,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Set
 import secrets
 
+from core.security_events import EventSeverity, SecurityEventBus
+
 
 class TrustLevel(Enum):
     """Trust levels for zero trust verification"""
@@ -49,8 +51,21 @@ class ZeroTrustEngine:
     Continuously verifies every access request regardless of location
     """
     
-    def __init__(self, secret_key: str):
+    def __init__(
+        self,
+        secret_key: str,
+        event_bus: Optional[SecurityEventBus] = None,
+        mfa_required_for_high_trust: bool = True,
+        replay_window_seconds: int = 300,
+        behavioral_score_threshold: float = 0.3,
+        session_timeout_seconds: int = 3600,
+    ):
         self.secret_key = secret_key.encode()
+        self.event_bus = event_bus
+        self.mfa_required_for_high_trust = mfa_required_for_high_trust
+        self.replay_window_seconds = replay_window_seconds
+        self.behavioral_score_threshold = behavioral_score_threshold
+        self.session_timeout_seconds = session_timeout_seconds
         self.verified_sessions: Dict[str, SecurityContext] = {}
         self.blocked_entities: Set[str] = set()
         self.suspicious_activities: List[Dict] = []
@@ -72,22 +87,40 @@ class ZeroTrustEngine:
         
         # Check timestamp for replay attacks
         current_time = time.time()
-        if abs(current_time - context.timestamp) > 300:  # 5 minute window
+        if abs(current_time - context.timestamp) > self.replay_window_seconds:
             self._log_security_event("TIMESTAMP_ANOMALY", context)
             return VerificationStatus.SUSPICIOUS
         
         # Verify MFA for high trust operations
-        if context.trust_level.value >= TrustLevel.HIGH.value and not context.mfa_verified:
+        if (
+            self.mfa_required_for_high_trust
+            and context.trust_level.value >= TrustLevel.HIGH.value
+            and not context.mfa_verified
+        ):
             self._log_security_event("MFA_REQUIRED", context)
             return VerificationStatus.FAILED
         
         # Check behavioral analysis score
-        if context.behavioral_score < 0.3:
+        if context.behavioral_score < self.behavioral_score_threshold:
             self._log_security_event("LOW_BEHAVIORAL_SCORE", context)
             return VerificationStatus.SUSPICIOUS
         
         # Store verified session
         self.verified_sessions[context.session_token] = context
+        if self.event_bus:
+            self.event_bus.emit(
+                event_type="zero_trust.request_verified",
+                source="zero_trust",
+                actor=context.user_id,
+                resource=context.device_id,
+                action="verify_request",
+                result="verified",
+                details={
+                    "ip_address": context.ip_address,
+                    "trust_level": context.trust_level.name,
+                    "mfa_verified": context.mfa_verified,
+                },
+            )
         return VerificationStatus.VERIFIED
     
     def _verify_token(self, token: str, user_id: str) -> bool:
@@ -130,6 +163,22 @@ class ZeroTrustEngine:
         }
         self.suspicious_activities.append(event)
         print(f"[SECURITY EVENT] {event_type}: {json.dumps(event)}")
+        if self.event_bus:
+            severity = (
+                EventSeverity.HIGH
+                if event_type in {"BLOCKED_ENTITY_ATTEMPTED_ACCESS", "INVALID_TOKEN"}
+                else EventSeverity.MEDIUM
+            )
+            self.event_bus.emit(
+                event_type=f"zero_trust.{event_type.lower()}",
+                source="zero_trust",
+                severity=severity,
+                actor=context.user_id,
+                resource=context.device_id,
+                action="verify_request",
+                result="denied",
+                details=event,
+            )
     
     def micro_segmentation_check(self, source: str, destination: str, 
                                  resource: str) -> bool:
@@ -181,7 +230,7 @@ class ZeroTrustEngine:
         context = self.verified_sessions[session_token]
         
         # Re-verify periodically
-        if time.time() - context.timestamp > 3600:  # 1 hour re-verification
+        if time.time() - context.timestamp > self.session_timeout_seconds:
             del self.verified_sessions[session_token]
             return False
         

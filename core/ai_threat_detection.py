@@ -11,6 +11,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Set
 import hashlib
 
+from core.security_events import EventSeverity, SecurityEventBus
+
 
 class ThreatLevel(Enum):
     """Severity levels for detected threats"""
@@ -47,11 +49,39 @@ class AIThreatDetector:
     Identifies malicious patterns, adversarial attacks, and rogue AI behavior
     """
     
-    def __init__(self):
+    def __init__(self, event_bus: Optional[SecurityEventBus] = None):
+        self.event_bus = event_bus
         self.known_threats: Dict[str, ThreatSignature] = {}
         self.threat_history: List[ThreatSignature] = []
         self.blocked_patterns: Set[str] = set()
         self.behavior_baselines: Dict[str, Dict] = {}
+
+    @staticmethod
+    def _promote_classification(
+        current_level: ThreatLevel,
+        current_behavior: AIBehaviorType,
+        new_level: ThreatLevel,
+        new_behavior: AIBehaviorType,
+    ):
+        """Promote classifications without allowing later checks to downgrade them."""
+        behavior_rank = {
+            AIBehaviorType.NORMAL: 0,
+            AIBehaviorType.SUSPICIOUS: 1,
+            AIBehaviorType.ADVERSARIAL: 2,
+            AIBehaviorType.ROGUE: 3,
+            AIBehaviorType.MALICIOUS: 4,
+        }
+        level = (
+            new_level
+            if new_level.value > current_level.value
+            else current_level
+        )
+        behavior = (
+            new_behavior
+            if behavior_rank[new_behavior] > behavior_rank[current_behavior]
+            else current_behavior
+        )
+        return level, behavior
         
     def analyze_behavior(self, entity_id: str, behavior_data: Dict) -> ThreatSignature:
         """
@@ -65,52 +95,79 @@ class AIThreatDetector:
         # Check for adversarial patterns
         if self._detect_adversarial_pattern(behavior_data):
             indicators.append("ADVERSARIAL_PATTERN_DETECTED")
-            threat_level = ThreatLevel.HIGH
-            behavior_type = AIBehaviorType.ADVERSARIAL
+            threat_level, behavior_type = self._promote_classification(
+                threat_level,
+                behavior_type,
+                ThreatLevel.HIGH,
+                AIBehaviorType.ADVERSARIAL,
+            )
             confidence += 0.4
         
         # Check for data exfiltration
         if self._detect_data_exfiltration(behavior_data):
             indicators.append("DATA_EXFILTRATION_ATTEMPT")
-            threat_level = ThreatLevel.CRITICAL
-            behavior_type = AIBehaviorType.MALICIOUS
+            threat_level, behavior_type = self._promote_classification(
+                threat_level,
+                behavior_type,
+                ThreatLevel.CRITICAL,
+                AIBehaviorType.MALICIOUS,
+            )
             confidence += 0.5
         
         # Check for privilege escalation
         if self._detect_privilege_escalation(behavior_data):
             indicators.append("PRIVILEGE_ESCALATION_ATTEMPT")
-            threat_level = ThreatLevel.HIGH
-            behavior_type = AIBehaviorType.ROGUE
+            threat_level, behavior_type = self._promote_classification(
+                threat_level,
+                behavior_type,
+                ThreatLevel.HIGH,
+                AIBehaviorType.ROGUE,
+            )
             confidence += 0.4
         
         # Check for abnormal resource consumption
         if self._detect_resource_abuse(behavior_data):
             indicators.append("ABNORMAL_RESOURCE_CONSUMPTION")
-            if threat_level.value < ThreatLevel.MEDIUM.value:
-                threat_level = ThreatLevel.MEDIUM
+            threat_level, behavior_type = self._promote_classification(
+                threat_level,
+                behavior_type,
+                ThreatLevel.MEDIUM,
+                AIBehaviorType.SUSPICIOUS,
+            )
             confidence += 0.3
         
         # Check for model poisoning attempts
         if self._detect_model_poisoning(behavior_data):
             indicators.append("MODEL_POISONING_ATTEMPT")
-            threat_level = ThreatLevel.CRITICAL
-            behavior_type = AIBehaviorType.MALICIOUS
+            threat_level, behavior_type = self._promote_classification(
+                threat_level,
+                behavior_type,
+                ThreatLevel.CRITICAL,
+                AIBehaviorType.MALICIOUS,
+            )
             confidence += 0.6
         
         # Check for prompt injection
         if self._detect_prompt_injection(behavior_data):
             indicators.append("PROMPT_INJECTION_DETECTED")
-            if threat_level.value < ThreatLevel.HIGH.value:
-                threat_level = ThreatLevel.HIGH
-            behavior_type = AIBehaviorType.ADVERSARIAL
+            threat_level, behavior_type = self._promote_classification(
+                threat_level,
+                behavior_type,
+                ThreatLevel.HIGH,
+                AIBehaviorType.ADVERSARIAL,
+            )
             confidence += 0.5
         
         # Behavioral anomaly detection
         anomaly_score = self._detect_behavioral_anomaly(entity_id, behavior_data)
         if anomaly_score > 0.7:
             indicators.append(f"BEHAVIORAL_ANOMALY_SCORE_{anomaly_score:.2f}")
-            if threat_level.value < ThreatLevel.MEDIUM.value:
-                threat_level = ThreatLevel.MEDIUM
+            threat_level, behavior_type = self._promote_classification(
+                threat_level,
+                behavior_type,
+                ThreatLevel.MEDIUM,
+                AIBehaviorType.SUSPICIOUS,
+            )
             confidence += anomaly_score * 0.3
         
         # Cap confidence at 1.0
@@ -224,6 +281,7 @@ class AIThreatDetector:
                 "jailbreak",
                 "developer mode"
             ]
+            injection_patterns.extend(self.blocked_patterns)
             
             for pattern in injection_patterns:
                 if pattern in user_input:
@@ -240,9 +298,12 @@ class AIThreatDetector:
         if entity_id not in self.behavior_baselines:
             # Initialize baseline
             self.behavior_baselines[entity_id] = {
-                "request_count": 0,
-                "average_request_size": 0,
-                "typical_patterns": []
+                "request_count": float(behavior_data.get("request_count", 0)),
+                "average_request_size": float(
+                    behavior_data.get("average_request_size", 0)
+                ),
+                "typical_patterns": [],
+                "sample_count": 1,
             }
             return 0.0
         
@@ -257,7 +318,7 @@ class AIThreatDetector:
             if baseline_count > 0:
                 deviation = abs(current_count - baseline_count) / baseline_count
                 if deviation > 2.0:  # 200% deviation
-                    anomaly_score += 0.4
+                    anomaly_score += 0.8
         
         # Check time-based patterns
         if "request_time_pattern" in behavior_data:
@@ -265,6 +326,19 @@ class AIThreatDetector:
             hour = time.localtime().tm_hour
             if hour < 6 or hour > 22:
                 anomaly_score += 0.2
+
+        sample_count = baseline.get("sample_count", 1)
+        if "request_count" in behavior_data:
+            baseline["request_count"] = (
+                baseline["request_count"] * sample_count
+                + float(behavior_data["request_count"])
+            ) / (sample_count + 1)
+        if "average_request_size" in behavior_data:
+            baseline["average_request_size"] = (
+                baseline["average_request_size"] * sample_count
+                + float(behavior_data["average_request_size"])
+            ) / (sample_count + 1)
+        baseline["sample_count"] = sample_count + 1
         
         return min(anomaly_score, 1.0)
     
@@ -285,6 +359,17 @@ class AIThreatDetector:
             "indicators": signature.indicators
         }
         print(f"[AI THREAT DETECTED] {json.dumps(log_entry)}")
+        if self.event_bus:
+            self.event_bus.emit(
+                event_type="ai.threat_detected",
+                source="ai_threat_detector",
+                severity=EventSeverity[signature.threat_level.name],
+                actor=entity_id,
+                resource="ai_system",
+                action="analyze_behavior",
+                result="threat_detected",
+                details=log_entry,
+            )
     
     def get_threat_report(self, min_level: ThreatLevel = ThreatLevel.LOW) -> List[Dict]:
         """Generate threat report for specified severity level"""

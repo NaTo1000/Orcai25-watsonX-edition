@@ -15,10 +15,13 @@ cryptographic operations are placeholders that provide NO real security.
 """
 
 import hashlib
+import hmac
 import secrets
 from typing import Tuple, Optional
 import json
 import base64
+
+from core.security_events import EventSeverity, SecurityEventBus
 
 
 class QuantumResistantCrypto:
@@ -27,9 +30,15 @@ class QuantumResistantCrypto:
     Uses lattice-based and hash-based algorithms resistant to quantum attacks
     """
     
-    def __init__(self):
-        self.algorithm = "CRYSTALS-KYBER-1024"  # NIST PQC standard
-        self.hash_algorithm = "SHA3-512"  # Quantum-resistant hash
+    def __init__(
+        self,
+        algorithm: str = "CRYSTALS-KYBER-1024",
+        hash_algorithm: str = "SHA3-512",
+        event_bus: Optional[SecurityEventBus] = None,
+    ):
+        self.algorithm = algorithm
+        self.hash_algorithm = hash_algorithm
+        self.event_bus = event_bus
         
     def generate_keypair(self) -> Tuple[bytes, bytes]:
         """
@@ -40,6 +49,16 @@ class QuantumResistantCrypto:
         # Simulate CRYSTALS-KYBER key generation
         private_key = secrets.token_bytes(2400)  # Kyber-1024 private key size
         public_key = self._derive_public_key(private_key)
+
+        if self.event_bus:
+            self.event_bus.emit(
+                event_type="crypto.keypair_generated",
+                source="quantum_crypto",
+                resource=self.algorithm,
+                action="generate_keypair",
+                result="success",
+                details={"algorithm": self.algorithm},
+            )
         
         return public_key, private_key
     
@@ -54,11 +73,19 @@ class QuantumResistantCrypto:
         Returns (ciphertext, shared_secret)
         Quantum-resistant key exchange
         """
-        # Generate random shared secret
+        # This reversible envelope only demonstrates the KEM interface.
         shared_secret = secrets.token_bytes(32)
-        
-        # Encapsulate with public key (simulated lattice-based encryption)
         ciphertext = self._lattice_encrypt(shared_secret, public_key)
+
+        if self.event_bus:
+            self.event_bus.emit(
+                event_type="crypto.secret_encapsulated",
+                source="quantum_crypto",
+                resource=self.algorithm,
+                action="encapsulate",
+                result="success",
+                details={"algorithm": self.algorithm},
+            )
         
         return ciphertext, shared_secret
     
@@ -77,26 +104,48 @@ class QuantumResistantCrypto:
     def _lattice_encrypt(self, plaintext: bytes, public_key: bytes) -> bytes:
         """Simulate lattice-based encryption (CRYSTALS-KYBER)"""
         # In production, use actual lattice-based encryption
-        noise = secrets.token_bytes(16)
-        combined = public_key + plaintext + noise
-        return hashlib.sha3_512(combined).digest() + noise
+        nonce = secrets.token_bytes(16)
+        mask = hashlib.sha3_256(public_key + nonce).digest()
+        wrapped = bytes(
+            value ^ mask[index % len(mask)]
+            for index, value in enumerate(plaintext)
+        )
+        tag = hmac.new(
+            public_key,
+            nonce + wrapped,
+            hashlib.sha3_256,
+        ).digest()[:16]
+        return nonce + wrapped + tag
     
     def _lattice_decrypt(self, ciphertext: bytes, private_key: bytes) -> bytes:
         """Simulate lattice-based decryption (CRYSTALS-KYBER)"""
-        # In production, use actual lattice-based decryption
-        # This is a placeholder showing the interface
-        return hashlib.sha3_256(ciphertext + private_key).digest()[:32]
+        if len(ciphertext) < 33:
+            raise ValueError("Invalid simulated KEM ciphertext")
+        public_key = self._derive_public_key(private_key)
+        nonce = ciphertext[:16]
+        wrapped = ciphertext[16:-16]
+        tag = ciphertext[-16:]
+        expected_tag = hmac.new(
+            public_key,
+            nonce + wrapped,
+            hashlib.sha3_256,
+        ).digest()[:16]
+        if not secrets.compare_digest(tag, expected_tag):
+            raise ValueError("Invalid simulated KEM authentication tag")
+        mask = hashlib.sha3_256(public_key + nonce).digest()
+        return bytes(
+            value ^ mask[index % len(mask)]
+            for index, value in enumerate(wrapped)
+        )
     
     def hash_based_signature(self, message: bytes, private_key: bytes) -> bytes:
         """
         Generate quantum-resistant digital signature
         Uses hash-based signatures (SPHINCS+ or similar)
         """
-        # Use SHA3 for quantum resistance
-        h = hashlib.sha3_512()
-        h.update(private_key)
-        h.update(message)
-        signature = h.digest()
+        # This public-key keyed digest only demonstrates the signature interface.
+        public_key = self._derive_public_key(private_key)
+        signature = hmac.new(public_key, message, hashlib.sha3_512).digest()
         
         # Add signature metadata
         sig_data = {
@@ -116,11 +165,11 @@ class QuantumResistantCrypto:
             sig_data = json.loads(signature.decode())
             sig_bytes = base64.b64decode(sig_data["signature"])
             
-            # Verify using public key
-            h = hashlib.sha3_512()
-            h.update(public_key)
-            h.update(message)
-            expected = h.digest()
+            expected = hmac.new(
+                public_key,
+                message,
+                hashlib.sha3_512,
+            ).digest()
             
             # Constant-time comparison
             return secrets.compare_digest(sig_bytes, expected)
@@ -170,22 +219,51 @@ class QuantumResistantCrypto:
         """Symmetric encryption (placeholder for AES-256-GCM or ChaCha20-Poly1305)"""
         # In production, use actual AES-256-GCM or ChaCha20-Poly1305
         from hashlib import pbkdf2_hmac
-        derived_key = pbkdf2_hmac('sha3-512', key, b'salt', 100000)
-        
-        # XOR encryption as placeholder (use real crypto in production)
-        encrypted = bytes(b ^ derived_key[i % len(derived_key)] 
-                         for i, b in enumerate(data))
-        return encrypted
+        nonce = secrets.token_bytes(16)
+        derived_key = pbkdf2_hmac(
+            'sha3-512',
+            key,
+            nonce,
+            100000,
+            dklen=64,
+        )
+        encrypted = bytes(
+            value ^ derived_key[index % 32]
+            for index, value in enumerate(data)
+        )
+        tag = hmac.new(
+            derived_key[32:],
+            nonce + encrypted,
+            hashlib.sha3_256,
+        ).digest()[:16]
+        return nonce + encrypted + tag
     
     def _symmetric_decrypt(self, data: bytes, key: bytes) -> bytes:
         """Symmetric decryption"""
         from hashlib import pbkdf2_hmac
-        derived_key = pbkdf2_hmac('sha3-512', key, b'salt', 100000)
-        
-        # XOR decryption as placeholder (use real crypto in production)
-        decrypted = bytes(b ^ derived_key[i % len(derived_key)] 
-                         for i, b in enumerate(data))
-        return decrypted
+        if len(data) < 32:
+            raise ValueError("Invalid encrypted payload")
+        nonce = data[:16]
+        encrypted = data[16:-16]
+        tag = data[-16:]
+        derived_key = pbkdf2_hmac(
+            'sha3-512',
+            key,
+            nonce,
+            100000,
+            dklen=64,
+        )
+        expected_tag = hmac.new(
+            derived_key[32:],
+            nonce + encrypted,
+            hashlib.sha3_256,
+        ).digest()[:16]
+        if not secrets.compare_digest(tag, expected_tag):
+            raise ValueError("Invalid encrypted payload authentication tag")
+        return bytes(
+            value ^ derived_key[index % 32]
+            for index, value in enumerate(encrypted)
+        )
     
     def quantum_safe_key_derivation(self, master_key: bytes, 
                                     context: str, length: int = 32) -> bytes:
@@ -193,6 +271,8 @@ class QuantumResistantCrypto:
         Derive keys using quantum-resistant KDF
         Uses SHA3-based HKDF
         """
+        if length < 1 or length > 255 * 64:
+            raise ValueError("length must be between 1 and 16320 bytes")
         # Extract
         prk = hashlib.sha3_512(master_key).digest()
         

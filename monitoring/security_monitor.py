@@ -11,6 +11,8 @@ from typing import Dict, List, Optional, Set, Callable
 from collections import defaultdict
 import statistics
 
+from core.security_events import EventSeverity, SecurityEventBus
+
 
 class AlertSeverity(Enum):
     """Alert severity levels"""
@@ -51,7 +53,17 @@ class SecurityMonitor:
     Detects anomalies and correlates security events
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        event_bus: Optional[SecurityEventBus] = None,
+        baseline_samples: int = 100,
+        anomaly_detection: bool = True,
+        alert_thresholds: Optional[Dict[str, float]] = None,
+    ):
+        self.event_bus = event_bus
+        self.baseline_samples = max(2, baseline_samples)
+        self.anomaly_detection = anomaly_detection
+        self.alert_thresholds = dict(alert_thresholds or {})
         self.metrics_history: Dict[MonitoringMetric, List[float]] = defaultdict(list)
         self.active_alerts: List[SecurityAlert] = []
         self.alert_handlers: Dict[AlertSeverity, List[Callable]] = defaultdict(list)
@@ -68,14 +80,55 @@ class SecurityMonitor:
             self.metrics_history[metric] = self.metrics_history[metric][-1000:]
         
         # Establish baseline if enough data and not yet established for this metric
-        if len(self.metrics_history[metric]) >= 100 and metric not in self.baselines:
+        if (
+            len(self.metrics_history[metric]) >= self.baseline_samples
+            and metric not in self.baselines
+        ):
             self._establish_baseline(metric)
         
         # Check for anomalies if baseline established for this metric
-        if metric in self.baselines:
+        if self.anomaly_detection and metric in self.baselines:
             anomaly = self._detect_anomaly(metric, value)
             if anomaly:
                 self._trigger_anomaly_alert(metric, value, source, anomaly)
+
+        threshold = self.alert_thresholds.get(metric.value)
+        if threshold is not None and value > threshold:
+            self._trigger_threshold_alert(metric, value, source, threshold)
+
+    def _trigger_threshold_alert(
+        self,
+        metric: MonitoringMetric,
+        value: float,
+        source: str,
+        threshold: float,
+    ):
+        """Raise an alert when a configured hard limit is exceeded."""
+        ratio = value / threshold if threshold else float("inf")
+        severity = (
+            AlertSeverity.CRITICAL
+            if ratio >= 2
+            else AlertSeverity.HIGH
+            if ratio >= 1.5
+            else AlertSeverity.MEDIUM
+        )
+        self.raise_alert(
+            SecurityAlert(
+                alert_id=f"THRESH-{int(time.time() * 1000)}",
+                severity=severity,
+                title=f"Threshold Exceeded: {metric.value}",
+                description=(
+                    f"{metric.value} from {source} exceeded its configured limit"
+                ),
+                affected_systems=[source],
+                indicators=[
+                    f"Metric: {metric.value}",
+                    f"Value: {value}",
+                    f"Threshold: {threshold}",
+                ],
+                timestamp=time.time(),
+            )
+        )
     
     def _establish_baseline(self, metric: MonitoringMetric):
         """Establish baseline for normal behavior"""
@@ -159,7 +212,7 @@ class SecurityMonitor:
         
         self.raise_alert(alert)
     
-    def raise_alert(self, alert: SecurityAlert):
+    def raise_alert(self, alert: SecurityAlert, correlate: bool = True):
         """Raise security alert and trigger handlers"""
         self.active_alerts.append(alert)
         
@@ -174,6 +227,17 @@ class SecurityMonitor:
             "timestamp": alert.timestamp
         }
         print(f"[SECURITY ALERT] {json.dumps(alert_data)}")
+        if self.event_bus:
+            self.event_bus.emit(
+                event_type="monitoring.alert_raised",
+                source="security_monitor",
+                severity=EventSeverity[alert.severity.name],
+                actor="security_monitor",
+                resource=",".join(alert.affected_systems) or "system",
+                action="raise_alert",
+                result="active",
+                details=alert_data,
+            )
         
         # Trigger alert handlers
         for handler in self.alert_handlers.get(alert.severity, []):
@@ -183,7 +247,8 @@ class SecurityMonitor:
                 print(f"[ALERT HANDLER ERROR] {e}")
         
         # Correlate with other events
-        self._correlate_events(alert)
+        if correlate:
+            self._correlate_events(alert)
     
     def _correlate_events(self, alert: SecurityAlert):
         """
@@ -220,7 +285,7 @@ class SecurityMonitor:
             )
             
             print(f"[EVENT CORRELATION] {correlation_id}: {len(related_alerts) + 1} events")
-            self.active_alerts.append(correlated_alert)
+            self.raise_alert(correlated_alert, correlate=False)
     
     def register_alert_handler(self, severity: AlertSeverity, 
                               handler: Callable[[SecurityAlert], None]):

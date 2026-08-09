@@ -20,8 +20,10 @@ import secrets
 import hashlib
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 import base64
+
+from core.security_events import EventSeverity, SecurityEventBus
 
 
 class ProtocolVersion(Enum):
@@ -50,6 +52,7 @@ class SecureChannel:
     established_at: float
     last_used: float
     message_count: int
+    key_version: int = 1
 
 
 class SecureCommProtocol:
@@ -58,11 +61,39 @@ class SecureCommProtocol:
     Enforces encryption, authentication, and integrity
     """
     
-    def __init__(self, security_level: SecurityLevel = SecurityLevel.HIGH):
+    def __init__(
+        self,
+        security_level: SecurityLevel = SecurityLevel.HIGH,
+        event_bus: Optional[SecurityEventBus] = None,
+        key_deriver: Optional[Callable[[bytes, str, int], bytes]] = None,
+    ):
         self.security_level = security_level
+        self.event_bus = event_bus
+        self.key_deriver = key_deriver
         self.active_channels: Dict[str, SecureChannel] = {}
         self.session_keys: Dict[str, bytes] = {}
+        self.key_history: Dict[str, Dict[int, bytes]] = {}
         self.nonce_cache: Dict[str, set] = {}
+
+    def _emit_event(
+        self,
+        event_type: str,
+        channel_id: str,
+        result: str,
+        severity: EventSeverity = EventSeverity.INFO,
+        details: Optional[Dict] = None,
+    ):
+        if self.event_bus:
+            self.event_bus.emit(
+                event_type=event_type,
+                source="secure_communication",
+                severity=severity,
+                actor="secure_comm",
+                resource=channel_id,
+                action=event_type.rsplit(".", 1)[-1],
+                result=result,
+                details=details,
+            )
         
     def establish_secure_channel(self, peer_id: str, 
                                  public_key: bytes) -> SecureChannel:
@@ -75,6 +106,7 @@ class SecureCommProtocol:
         # Perform key exchange (simulated Diffie-Hellman or ECDH)
         session_key = self._perform_key_exchange(public_key)
         self.session_keys[channel_id] = session_key
+        self.key_history[channel_id] = {1: session_key}
         
         # Initialize nonce cache for replay protection
         self.nonce_cache[channel_id] = set()
@@ -95,6 +127,17 @@ class SecureCommProtocol:
         
         print(f"[SECURE COMM] Established channel {channel_id} with {peer_id}")
         print(f"[SECURE COMM] Protocol: {channel.protocol.value}, Encryption: {channel.encryption_algorithm}")
+        self._emit_event(
+            "communication.channel_established",
+            channel_id,
+            "success",
+            details={
+                "peer_id": peer_id,
+                "protocol": channel.protocol.value,
+                "encryption": channel.encryption_algorithm,
+                "key_exchange": channel.key_exchange,
+            },
+        )
         
         return channel
     
@@ -104,6 +147,12 @@ class SecureCommProtocol:
         """
         if channel_id not in self.active_channels:
             print(f"[SECURE COMM ERROR] Channel not found: {channel_id}")
+            self._emit_event(
+                "communication.channel_not_found",
+                channel_id,
+                "failed",
+                EventSeverity.HIGH,
+            )
             return None
         
         channel = self.active_channels[channel_id]
@@ -121,7 +170,14 @@ class SecureCommProtocol:
         plaintext = json.dumps(message_data).encode()
         
         # Encrypt with authenticated encryption (AEAD)
-        ciphertext = self._encrypt_aead(plaintext, session_key, channel.encryption_algorithm)
+        ciphertext = (
+            channel.key_version.to_bytes(4, "big")
+            + self._encrypt_aead(
+                plaintext,
+                session_key,
+                channel.encryption_algorithm,
+            )
+        )
         
         # Update channel stats
         channel.last_used = time.time()
@@ -130,6 +186,13 @@ class SecureCommProtocol:
         # Rotate keys periodically for perfect forward secrecy
         if channel.message_count % 1000 == 0:
             self._rotate_session_key(channel_id)
+
+        self._emit_event(
+            "communication.message_sent",
+            channel_id,
+            "success",
+            details={"message_count": channel.message_count},
+        )
         
         return ciphertext
     
@@ -141,16 +204,50 @@ class SecureCommProtocol:
         """
         if channel_id not in self.active_channels:
             print(f"[SECURE COMM ERROR] Channel not found: {channel_id}")
+            self._emit_event(
+                "communication.channel_not_found",
+                channel_id,
+                "failed",
+                EventSeverity.HIGH,
+            )
+            return None
+
+        channel = self.active_channels[channel_id]
+        if len(ciphertext) < 5:
+            self._emit_event(
+                "communication.invalid_ciphertext",
+                channel_id,
+                "failed",
+                EventSeverity.HIGH,
+            )
+            return None
+        key_version = int.from_bytes(ciphertext[:4], "big")
+        session_key = self.key_history[channel_id].get(key_version)
+        if session_key is None:
+            self._emit_event(
+                "communication.unknown_key_version",
+                channel_id,
+                "failed",
+                EventSeverity.HIGH,
+                {"key_version": key_version},
+            )
             return None
         
-        session_key = self.session_keys[channel_id]
-        channel = self.active_channels[channel_id]
-        
         # Decrypt with authenticated encryption
-        plaintext = self._decrypt_aead(ciphertext, session_key, channel.encryption_algorithm)
+        plaintext = self._decrypt_aead(
+            ciphertext[4:],
+            session_key,
+            channel.encryption_algorithm,
+        )
         
         if plaintext is None:
             print(f"[SECURE COMM ERROR] Decryption failed for channel {channel_id}")
+            self._emit_event(
+                "communication.decryption_failed",
+                channel_id,
+                "failed",
+                EventSeverity.HIGH,
+            )
             return None
         
         try:
@@ -163,12 +260,24 @@ class SecureCommProtocol:
         nonce = message_data.get("nonce")
         if nonce in self.nonce_cache[channel_id]:
             print(f"[SECURE COMM ERROR] Replay attack detected on channel {channel_id}")
+            self._emit_event(
+                "communication.replay_detected",
+                channel_id,
+                "blocked",
+                EventSeverity.CRITICAL,
+            )
             return None
         
         # Check timestamp
         timestamp = message_data.get("timestamp", 0)
         if abs(time.time() - timestamp) > 60:  # 1 minute tolerance
             print(f"[SECURE COMM ERROR] Message timestamp out of range")
+            self._emit_event(
+                "communication.stale_message",
+                channel_id,
+                "blocked",
+                EventSeverity.HIGH,
+            )
             return None
         
         # Add nonce to cache
@@ -180,6 +289,12 @@ class SecureCommProtocol:
             old_nonces = list(self.nonce_cache[channel_id])[:5000]
             self.nonce_cache[channel_id] -= set(old_nonces)
         
+        self._emit_event(
+            "communication.message_received",
+            channel_id,
+            "success",
+            details={"key_version": key_version},
+        )
         return message_data.get("payload")
     
     def _generate_channel_id(self, peer_id: str) -> str:
@@ -202,7 +317,18 @@ class SecureCommProtocol:
         ).digest()
         
         # Derive session key using HKDF
-        session_key = self._hkdf(shared_secret, b"secure_channel_key", 32)
+        if self.key_deriver:
+            session_key = self.key_deriver(
+                shared_secret,
+                "secure_channel_key",
+                32,
+            )
+        else:
+            session_key = self._hkdf(
+                shared_secret,
+                b"secure_channel_key",
+                32,
+            )
         
         return session_key
     
@@ -292,8 +418,20 @@ class SecureCommProtocol:
         new_key = self._hkdf(old_key, b"key_rotation", 32)
         
         self.session_keys[channel_id] = new_key
+        channel = self.active_channels[channel_id]
+        channel.key_version += 1
+        history = self.key_history[channel_id]
+        history[channel.key_version] = new_key
+        for old_version in sorted(history)[:-3]:
+            del history[old_version]
         
         print(f"[SECURE COMM] Rotated session key for channel {channel_id}")
+        self._emit_event(
+            "communication.key_rotated",
+            channel_id,
+            "success",
+            details={"key_version": channel.key_version},
+        )
     
     def close_channel(self, channel_id: str):
         """Close secure channel and clear keys"""
@@ -303,11 +441,19 @@ class SecureCommProtocol:
         if channel_id in self.session_keys:
             # Securely wipe key from memory
             del self.session_keys[channel_id]
+
+        if channel_id in self.key_history:
+            del self.key_history[channel_id]
         
         if channel_id in self.nonce_cache:
             del self.nonce_cache[channel_id]
         
         print(f"[SECURE COMM] Closed channel {channel_id}")
+        self._emit_event(
+            "communication.channel_closed",
+            channel_id,
+            "success",
+        )
     
     def get_channel_status(self, channel_id: str) -> Optional[Dict]:
         """Get status of secure channel"""
@@ -324,6 +470,7 @@ class SecureCommProtocol:
             "established_at": channel.established_at,
             "last_used": channel.last_used,
             "message_count": channel.message_count,
+            "key_version": channel.key_version,
             "age_seconds": time.time() - channel.established_at
         }
     

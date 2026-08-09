@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Callable, Optional
 import threading
+import uuid
 
+from core.security_events import EventSeverity, SecurityEventBus
 
 class EmergencyLevel(Enum):
     """Emergency response levels"""
@@ -47,13 +49,20 @@ class RogueAIDetector:
     Monitors for dangerous AI behavior and triggers emergency protocols
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        event_bus: Optional[SecurityEventBus] = None,
+        emergency_contacts: Optional[List[str]] = None,
+        automatic_containment: bool = True,
+    ):
+        self.event_bus = event_bus
+        self.automatic_containment = automatic_containment
         self.emergency_level = EmergencyLevel.GREEN
         self.emergency_history: List[EmergencyEvent] = []
         self.monitored_systems: Dict[str, Dict] = {}
         self.kill_switches: Dict[str, Callable] = {}
         self.containment_active = False
-        self.emergency_contacts: List[str] = []
+        self.emergency_contacts = list(emergency_contacts or [])
         
     def register_system(self, system_id: str, kill_switch: Callable):
         """Register AI system with emergency containment"""
@@ -109,6 +118,30 @@ class RogueAIDetector:
             self._escalate_emergency(system_id, triggers)
         
         return is_rogue
+
+    def escalate_from_threat(
+        self,
+        system_id: str,
+        threat_level: str,
+        indicators: List[str],
+    ):
+        """Translate a normalized AI threat into an emergency response level."""
+        level_name = threat_level.upper()
+        if level_name == "CRITICAL":
+            target_level = EmergencyLevel.RED
+        elif level_name == "HIGH":
+            target_level = EmergencyLevel.ORANGE
+        elif level_name == "MEDIUM":
+            target_level = EmergencyLevel.YELLOW
+        else:
+            return
+
+        if target_level.value > self.emergency_level.value:
+            self.set_emergency_level(
+                target_level,
+                system_id,
+                [f"AI_THREAT_{level_name}", *indicators],
+            )
     
     def _detect_goal_misalignment(self, metrics: Dict) -> bool:
         """Detect if AI is pursuing unintended goals"""
@@ -208,7 +241,7 @@ class RogueAIDetector:
         
         # Record event
         event = EmergencyEvent(
-            event_id=f"EMG-{int(time.time())}",
+            event_id=f"EMG-{uuid.uuid4().hex[:16].upper()}",
             level=level,
             trigger=", ".join(triggers),
             affected_systems=[system_id],
@@ -216,25 +249,44 @@ class RogueAIDetector:
             actions_taken=[]
         )
         
-        # Execute containment actions
-        if level == EmergencyLevel.YELLOW:
+        if not self.automatic_containment:
+            event.actions_taken.append("Containment pending operator approval")
+        elif level == EmergencyLevel.YELLOW:
             event.actions_taken.append("Enhanced monitoring activated")
             self._activate_enhanced_monitoring(system_id)
-        
         elif level == EmergencyLevel.ORANGE:
             event.actions_taken.append("Partial containment activated")
             self._activate_partial_containment(system_id)
-        
         elif level == EmergencyLevel.RED:
             event.actions_taken.append("Full containment activated")
             self._activate_full_containment(system_id)
-        
         elif level == EmergencyLevel.BLACK:
             event.actions_taken.append("Emergency shutdown initiated")
             self._emergency_shutdown(system_id)
         
         self.emergency_history.append(event)
         self._notify_emergency_contacts(event)
+        if self.event_bus:
+            severity = EventSeverity[
+                "CRITICAL" if level.value >= EmergencyLevel.RED.value
+                else "HIGH" if level == EmergencyLevel.ORANGE
+                else "MEDIUM"
+            ]
+            self.event_bus.emit(
+                event_type="emergency.level_changed",
+                source="rogue_ai_containment",
+                severity=severity,
+                actor=system_id,
+                resource="ai_system",
+                action="contain",
+                result=level.name.lower(),
+                details={
+                    "event_id": event.event_id,
+                    "level": level.name,
+                    "triggers": triggers,
+                    "actions_taken": event.actions_taken,
+                },
+            )
     
     def _activate_enhanced_monitoring(self, system_id: str):
         """Increase monitoring frequency and scope"""
@@ -262,6 +314,7 @@ class RogueAIDetector:
     def _emergency_shutdown(self, system_id: str):
         """Execute emergency shutdown of AI system"""
         print(f"[EMERGENCY SHUTDOWN] Terminating system: {system_id}")
+        self.containment_active = True
         
         # Execute kill switch
         if system_id in self.kill_switches:
